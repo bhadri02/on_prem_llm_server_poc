@@ -1,0 +1,67 @@
+replicaCount: 1
+
+image:
+  repository: registry.local/cache-service
+  tag: ""          # set via CI --set image.tag=<sha>; defaults to "latest" in deployment template
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8086
+
+metricsPort: 9090
+
+env:
+  LOG_LEVEL: "INFO"
+  # NOTE: REDIS_URL uses the Bitnami redis sub-chart naming convention.
+  # Override with --set env.REDIS_URL=redis://<host>:6379 if release name differs.
+  REDIS_URL: "redis://redis-master:6379"
+  SIMILARITY_THRESHOLD: "0.90"
+  EMBEDDING_MODEL: "all-MiniLM-L6-v2"
+  MAX_SEMANTIC_ENTRIES: "500"
+  TTL_CHAT: "3600"
+  TTL_CODE: "7200"
+  TTL_SUMMARIZATION: "86400"
+
+# Redis sub-chart (single instance — POC scope)
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false    # no auth for POC
+  master:
+    persistence:
+      enabled: true
+      size: 5Gi
+
+resources:
+  requests:
+    cpu: "200m"
+    memory: "512Mi"
+  limits:
+    cpu: "1"
+    memory: "1Gi"
+
+autoscaling:
+  enabled: false      # POC: single replica only
+
+vault:
+  enabled: false      # Phase 2
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8086
+  initialDelaySeconds: 15
+  periodSeconds: 15
+  timeoutSeconds: 2
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8086
+  initialDelaySeconds: 15
+  periodSeconds: 15
+  timeoutSeconds: 2
+  failureThreshold: 3
