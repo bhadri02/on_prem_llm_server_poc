@@ -1,0 +1,6 @@
+apiVersion: v2
+name: audit-store
+description: Append-only audit trail service for the Enterprise LLM Platform (POC)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
