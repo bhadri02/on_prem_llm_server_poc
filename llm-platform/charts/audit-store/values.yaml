@@ -1,0 +1,42 @@
+replicaCount: 1
+
+image:
+  repository: registry.local/audit-store
+  tag: ""
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 9200
+
+env:
+  DB_PATH: "/data/audit.db"
+  LOG_LEVEL: "INFO"
+  # AUDIT_API_KEY must NOT be committed here.
+  # Provide it at deploy time via a Kubernetes Secret named audit-store-secrets.
+  # The deployment.yaml reads it from secretKeyRef: { name: audit-store-secrets, key: AUDIT_API_KEY }
+
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClass: ""
+  accessMode: ReadWriteOnce
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "256Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+observability:
+  metrics:
+    enabled: true
+    port: 9090
+
+autoscaling:
+  enabled: false
+
+vault:
+  enabled: false
