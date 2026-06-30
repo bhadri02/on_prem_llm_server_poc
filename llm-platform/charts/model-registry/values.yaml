@@ -1,0 +1,57 @@
+replicaCount: 1
+
+image:
+  repository: registry.local/model-registry
+  tag: ""          # set via CI --set image.tag=<sha>
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 5000
+
+env:
+  LOG_LEVEL: "INFO"
+  STORAGE_PATH: "/data/models.json"
+
+# REGISTRY_API_KEY injected from a K8s Secret — never stored in values.yaml
+apiKeySecret:
+  name: model-registry-secret
+  key: registry-api-key
+
+persistence:
+  enabled: true       # always true; no ephemeral path supported
+  size: 1Gi
+  accessMode: ReadWriteOnce
+  storageClass: ""    # uses cluster default when empty
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "300m"
+    memory: "256Mi"
+
+autoscaling:
+  enabled: false      # POC: single replica only
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 5000
+  initialDelaySeconds: 10
+  periodSeconds: 15
+  timeoutSeconds: 2
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 5000
+  initialDelaySeconds: 10
+  periodSeconds: 15
+  timeoutSeconds: 2
+  failureThreshold: 3
+
+vault:
+  enabled: false      # Phase 2

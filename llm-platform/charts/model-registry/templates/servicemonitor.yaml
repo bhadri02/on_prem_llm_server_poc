@@ -1,0 +1,17 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "model-registry.fullname" . }}
+  labels:
+    {{- include "model-registry.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "model-registry.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: http
+      path: /health
+      interval: 30s

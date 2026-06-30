@@ -1,0 +1,41 @@
+[
+  {
+    "name": "llama3-8b",
+    "version": "1.0.0",
+    "backend": "ollama",
+    "endpoint": "http://inference-ollama:11434",
+    "tasks": ["chat", "summarization", "reasoning"],
+    "status": "active",
+    "vram_required_gb": 6,
+    "max_context_length": 8192,
+    "fallback_model": "mistral-7b",
+    "registered_at": "2026-06-01T00:00:00Z",
+    "notes": "POC primary model"
+  },
+  {
+    "name": "mistral-7b",
+    "version": "1.0.0",
+    "backend": "ollama",
+    "endpoint": "http://inference-ollama:11434",
+    "tasks": ["chat", "summarization", "translation"],
+    "status": "active",
+    "vram_required_gb": 4.5,
+    "max_context_length": 8192,
+    "fallback_model": null,
+    "registered_at": "2026-06-01T00:00:00Z",
+    "notes": "POC secondary model"
+  },
+  {
+    "name": "deepseek-coder",
+    "version": "1.0.0",
+    "backend": "ollama",
+    "endpoint": "http://inference-ollama:11434",
+    "tasks": ["code"],
+    "status": "active",
+    "vram_required_gb": 5,
+    "max_context_length": 16384,
+    "fallback_model": "llama3-8b",
+    "registered_at": "2026-06-01T00:00:00Z",
+    "notes": "POC code model"
+  }
+]
