@@ -69,7 +69,7 @@ Simple chat interface:
 - "View Audit Trail" button → opens audit viewer for that request_id
 
 ```
-[ Model: llama3:8b ▼ ]   [ Temperature: 0.7 ]
+[ Model: llama3.2:3b ▼ ]   [ Temperature: 0.7 ]
 
 [ You: Summarize the key benefits of Kubernetes ]
 

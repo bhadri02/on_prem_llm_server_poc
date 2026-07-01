@@ -34,17 +34,17 @@ Provide a simple registry that stores model metadata (name, capabilities, backen
 
 ```json
 {
-  "name": "llama3-8b",
+  "name": "llama3.2-3b",
   "version": "1.0.0",
   "backend": "ollama",
   "endpoint": "http://inference-ollama:11434",
-  "tasks": ["chat", "summarization", "reasoning"],
+  "tasks": ["chat", "summarization", "reasoning", "code"],
   "status": "active",
-  "vram_required_gb": 6,
+  "vram_required_gb": 3,
   "max_context_length": 8192,
-  "fallback_model": "mistral-7b",
+  "fallback_model": null,
   "registered_at": "ISO-8601",
-  "notes": "POC primary model"
+  "notes": "POC primary model — small CPU-capable model"
 }
 ```
 
@@ -64,7 +64,7 @@ GET    /health
 ### Example: Router fetches models for a task
 ```
 GET /models/by-task/chat
-→ [{ "name": "llama3-8b", "backend": "ollama", "endpoint": "...", "status": "active" }]
+→ [{ "name": "llama3.2-3b", "backend": "ollama", "endpoint": "...", "status": "active" }]
 ```
 
 ---
@@ -77,31 +77,13 @@ Use a JSON file (`models.json`) on a PersistentVolume, or SQLite. FastAPI reads/
 // models.json
 [
   {
-    "name": "llama3-8b",
+    "name": "llama3.2-3b",
     "version": "1.0.0",
     "backend": "ollama",
     "endpoint": "http://inference-ollama:11434",
-    "tasks": ["chat", "summarization", "reasoning"],
-    "status": "active",
-    "fallback_model": "mistral-7b"
-  },
-  {
-    "name": "mistral-7b",
-    "version": "1.0.0",
-    "backend": "ollama",
-    "endpoint": "http://inference-ollama:11434",
-    "tasks": ["chat", "summarization", "translation"],
+    "tasks": ["chat", "summarization", "reasoning", "code"],
     "status": "active",
     "fallback_model": null
-  },
-  {
-    "name": "deepseek-coder",
-    "version": "1.0.0",
-    "backend": "ollama",
-    "endpoint": "http://inference-ollama:11434",
-    "tasks": ["code"],
-    "status": "active",
-    "fallback_model": "llama3-8b"
   }
 ]
 ```

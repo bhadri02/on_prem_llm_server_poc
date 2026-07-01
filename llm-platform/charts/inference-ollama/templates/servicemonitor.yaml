@@ -1,0 +1,17 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "inference-ollama.fullname" . }}-adapter
+  labels:
+    {{- include "inference-ollama.adapterLabels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "inference-ollama.adapterSelectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
