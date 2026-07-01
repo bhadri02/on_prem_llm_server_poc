@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "security-layer.fullname" . }}
+  labels:
+    {{- include "security-layer.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "security-layer.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "security-layer.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: security-layer
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8081
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: LOG_LEVEL
+              value: {{ .Values.env.LOG_LEVEL | quote }}
+            - name: DOWNSTREAM_ROUTER_URL
+              value: {{ .Values.env.DOWNSTREAM_ROUTER_URL | quote }}
+            - name: PII_ENABLED
+              value: {{ .Values.env.PII_ENABLED | quote }}
+            - name: INJECTION_PATTERNS_PATH
+              value: {{ .Values.env.INJECTION_PATTERNS_PATH | quote }}
+            - name: AUDIT_STORE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: security-layer-secrets
+                  key: AUDIT_STORE_URL
+            - name: AUDIT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: security-layer-secrets
+                  key: AUDIT_API_KEY
+          volumeMounts:
+            - name: injection-patterns
+              mountPath: /config
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: injection-patterns
+          configMap:
+            name: {{ include "security-layer.fullname" . }}-patterns
+            items:
+              - key: injection_patterns.yaml
+                path: injection_patterns.yaml
