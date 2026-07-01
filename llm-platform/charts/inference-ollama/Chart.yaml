@@ -1,0 +1,6 @@
+apiVersion: v2
+name: inference-ollama
+description: "Inference Layer (Layer 5) — Ollama engine + Inference Adapter for the LLM platform"
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

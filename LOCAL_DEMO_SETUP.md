@@ -22,7 +22,7 @@ The steering files define the architecture and Helm chart structure. **No applic
 - ❌ vLLM — requires NVIDIA GPU, skip entirely
 - ❌ Large models (13B+) — CPU inference only, too slow to demo
 
-**Recommended model for demo:** `phi3:mini` (2.3 GB, fast on CPU) or `llama3.2:3b` (2 GB, good quality)
+**Recommended model for demo:** `llama3.2:3b` (2.3 GB, fast on CPU) or `llama3.2:3b` (2 GB, good quality)
 
 ---
 
@@ -62,14 +62,14 @@ Download from https://ollama.com/download/windows and install.
 
 After install, pull a small model:
 ```cmd
-ollama pull phi3:mini
+ollama pull llama3.2:3b
 ```
 This downloads ~2.3 GB. Wait for it to complete.
 
 Verify:
 ```cmd
 ollama list
-ollama run phi3:mini "Say hello in one sentence"
+ollama run llama3.2:3b "Say hello in one sentence"
 ```
 
 ### 1d. Install NGINX Ingress Controller
@@ -221,9 +221,9 @@ Once everything is running, walk through this sequence:
 curl -X POST http://localhost/v1/chat/completions ^
   -H "X-Api-Key: poc-secret-key" ^
   -H "Content-Type: application/json" ^
-  -d "{\"model\": \"phi3:mini\", \"messages\": [{\"role\": \"user\", \"content\": \"What is Kubernetes in 2 sentences?\"}]}"
+  -d "{\"model\": \"llama3.2:3b\", \"messages\": [{\"role\": \"user\", \"content\": \"What is Kubernetes in 2 sentences?\"}]}"
 ```
-**Show:** Response from phi3:mini flowing through all layers.
+**Show:** Response from llama3.2:3b flowing through all layers.
 
 ### Demo 2 — Security Block (Injection Attempt)
 ```cmd
@@ -262,7 +262,7 @@ Open browser to `http://localhost:8084` (Admin Portal).
 
 ### Demo 6 — Model Registry
 In Admin Portal → Model Viewer.
-- Show registered models (phi3:mini, llama3.2:3b)
+- Show registered models (llama3.2:3b, llama3.2:3b)
 - Demonstrate retiring a model → Router stops sending traffic to it
 - Re-activate it
 
@@ -288,7 +288,7 @@ Add to `C:\Windows\System32\drivers\etc\hosts`:
 |---|---|
 | Enable Kubernetes in Docker Desktop | 5 min |
 | Install Helm | 5 min |
-| Install Ollama + pull phi3:mini model | 15 min (download) |
+| Install Ollama + pull llama3.2:3b model | 15 min (download) |
 | Build all Docker images | 10 min (once code exists) |
 | Deploy with Helm | 5 min |
 | Verify smoke tests | 10 min |
@@ -300,7 +300,7 @@ Add to `C:\Windows\System32\drivers\etc\hosts`:
 
 | Limitation | Impact | Mitigation |
 |---|---|---|
-| No NVIDIA GPU — CPU inference only | phi3:mini takes ~5–15 seconds per response | Use short prompts; set expectations upfront |
+| No NVIDIA GPU — CPU inference only | llama3.2:3b takes ~5–15 seconds per response | Use short prompts; set expectations upfront |
 | Integrated GPU (Intel Iris Xe) cannot be used for LLM inference | Cannot use vLLM | Ollama on CPU is sufficient for demo |
 | Helm not yet installed | Can't deploy | Install Helm first (Step 1b) |
 | Docker Desktop Kubernetes not running | Can't deploy | Enable in Docker Desktop settings |

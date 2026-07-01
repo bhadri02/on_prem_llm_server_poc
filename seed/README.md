@@ -4,15 +4,15 @@ This directory contains static seed files for first-deployment initialisation of
 
 ## `models.json`
 
-A pre-populated JSON array of three POC `ModelRecord` objects conforming to the Model Registry schema:
+A pre-populated JSON array of one POC `ModelRecord` object conforming to the Model Registry schema:
 
 | Name | Tasks | VRAM (GB) | Context Length | Fallback |
 |---|---|---|---|---|
-| `llama3-8b` | chat, summarization, reasoning | 6 | 8192 | `mistral-7b` |
-| `mistral-7b` | chat, summarization, translation | 4.5 | 8192 | — |
-| `deepseek-coder` | code | 5 | 16384 | `llama3-8b` |
+| `llama3.2-3b` | chat, summarization, reasoning, code | 3 | 8192 | — |
 
-All three records use backend `ollama` and endpoint `http://inference-ollama:11434`.
+The record uses backend `ollama` and endpoint `http://inference-ollama:11434`.
+
+`llama3.2:3b` was chosen as the sole POC model because it runs on CPU (~3 GB RAM), pulls quickly, and covers all POC task types adequately.
 
 ### How to use
 

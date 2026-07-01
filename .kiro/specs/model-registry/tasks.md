@@ -173,11 +173,9 @@ Tasks follow the module structure defined in design.md. The core implementation 
   - **Validates: Requirements 10.1** (containerisation prerequisite for Helm deployment)
 
 - [x] 12. Seed data (`models.json`)
-  - Create `seed/models.json` with the three POC seed records from design.md:
-    - `llama3-8b`: tasks `["chat","summarization","reasoning"]`, status `active`, vram 6, context 8192, fallback `mistral-7b`, notes `"POC primary model"`, registered_at `"2026-06-01T00:00:00Z"`
-    - `mistral-7b`: tasks `["chat","summarization","translation"]`, status `active`, vram 4.5, context 8192, fallback `null`, notes `"POC secondary model"`, registered_at `"2026-06-01T00:00:00Z"`
-    - `deepseek-coder`: tasks `["code"]`, status `active`, vram 5, context 16384, fallback `"llama3-8b"`, notes `"POC code model"`, registered_at `"2026-06-01T00:00:00Z"`
-  - All three records use `backend: "ollama"` and `endpoint: "http://inference-ollama:11434"`
+  - Create `seed/models.json` with the single POC seed record from design.md:
+    - `llama3.2-3b`: tasks `["chat","summarization","reasoning","code"]`, status `active`, vram 3, context 8192, fallback `null`, notes `"POC primary model — small CPU-capable model"`, registered_at `"2026-06-01T00:00:00Z"`
+  - Record uses `backend: "ollama"` and `endpoint: "http://inference-ollama:11434"`
   - Document in a comment (or README note) that this file is copied to the PVC at first deployment
   - **Validates: Requirements 2.1, 11.1** (enables Router startup poll smoke test)
 

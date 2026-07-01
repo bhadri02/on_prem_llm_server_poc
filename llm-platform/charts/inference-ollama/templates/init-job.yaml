@@ -1,0 +1,72 @@
+{{- if .Values.initJob.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "inference-ollama.fullname" . }}-init
+  labels:
+    {{- include "inference-ollama.labels" . | nindent 4 }}
+  annotations:
+    # Run after Ollama deployment is available; manual re-run with helm upgrade
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "inference-ollama.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: model-puller
+          image: {{ .Values.initJob.image | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+
+              MODELS="{{ range .Values.models.preload }}{{ . }} {{ end }}"
+              MODELS="${MODELS%% }"   # trim trailing space
+
+              # Exit 0 immediately when preload list is empty
+              if [ -z "${MODELS}" ]; then
+                echo '{"event":"model_preload_skipped","reason":"models.preload list is empty"}'
+                exit 0
+              fi
+
+              OLLAMA_URL="http://inference-ollama:11434"
+              TIMEOUT={{ .Values.initJob.pullTimeoutSeconds }}
+
+              for MODEL in ${MODELS}; do
+                echo "{\"event\":\"model_pull_start\",\"model\":\"${MODEL}\"}"
+
+                HTTP_STATUS=$(curl --silent --output /tmp/pull_response.json \
+                  --write-out "%{http_code}" \
+                  --max-time "${TIMEOUT}" \
+                  --retry 0 \
+                  -X POST "${OLLAMA_URL}/api/pull" \
+                  -H "Content-Type: application/json" \
+                  -d "{\"name\":\"${MODEL}\"}" \
+                  2>/tmp/pull_stderr.txt) || CURL_EXIT=$?
+
+                CURL_EXIT=${CURL_EXIT:-0}
+
+                if [ "${CURL_EXIT}" -ne 0 ]; then
+                  REASON=$(cat /tmp/pull_stderr.txt 2>/dev/null || echo "curl exit code ${CURL_EXIT}")
+                  echo "{\"event\":\"model_pull_failed\",\"model\":\"${MODEL}\",\"reason\":\"${REASON}\"}"
+                  exit 1
+                fi
+
+                if [ "${HTTP_STATUS}" != "200" ]; then
+                  REASON="HTTP ${HTTP_STATUS}: $(cat /tmp/pull_response.json 2>/dev/null)"
+                  echo "{\"event\":\"model_pull_failed\",\"model\":\"${MODEL}\",\"reason\":\"${REASON}\"}"
+                  exit 1
+                fi
+
+                echo "{\"event\":\"model_pull_complete\",\"model\":\"${MODEL}\"}"
+              done
+
+              echo '{"event":"model_preload_complete"}'
+{{- end }}
