@@ -107,7 +107,7 @@ from langchain_core.tools import tool
 llm = ChatOpenAI(
     base_url="http://router:8082/v1",
     api_key="poc-secret-key",
-    model="llama3:8b",
+    model="llama3.2:3b",
 )
 
 agent = create_react_agent(llm, tools=[web_search, calculator, get_current_time])

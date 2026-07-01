@@ -185,17 +185,17 @@ class HealthResponse(BaseModel):
 ```json
 [
   {
-    "name": "llama3-8b",
+    "name": "llama3.2-3b",
     "version": "1.0.0",
     "backend": "ollama",
     "endpoint": "http://inference-ollama:11434",
-    "tasks": ["chat", "summarization", "reasoning"],
+    "tasks": ["chat", "summarization", "reasoning", "code"],
     "status": "active",
-    "vram_required_gb": 6,
+    "vram_required_gb": 3,
     "max_context_length": 8192,
-    "fallback_model": "mistral-7b",
+    "fallback_model": null,
     "registered_at": "2026-06-01T00:00:00Z",
-    "notes": "POC primary model"
+    "notes": "POC primary model — small CPU-capable model"
   }
 ]
 ```
@@ -232,13 +232,13 @@ All error responses use FastAPI's default `{"detail": "..."}` structure. Validat
 
 ```json
 // 409 example
-{ "detail": "Model with name 'llama3-8b' already exists." }
+{ "detail": "Model with name 'llama3.2-3b' already exists." }
 
 // 401 example
 { "detail": "Invalid or missing X-API-Key header." }
 
 // 500 example
-{ "detail": "Storage write failed. Model 'llama3-8b' was not persisted." }
+{ "detail": "Storage write failed. Model 'llama3.2-3b' was not persisted." }
 ```
 
 ---
@@ -610,7 +610,7 @@ sequenceDiagram
     R->>RG: GET http://model-registry:5000/models
     RG->>FS: read _records (in-memory, loaded at startup)
     FS-->>RG: list[ModelRecord]
-    RG-->>R: HTTP 200  [{"name":"llama3-8b",...}, ...]
+    RG-->>R: HTTP 200  [{"name":"llama3.2-3b",...}, ...]
     R->>R: build Capability_Matrix from response
 
     note over R: If registry unreachable:

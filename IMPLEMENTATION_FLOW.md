@@ -91,7 +91,7 @@ Day 1–2
 
 Day 3–4
 ├── Track 2:  [E] Inference Adapter  (Ollama must be running)
-├── Track 1:  [D] Ollama setup + model pull (phi3:mini, llama3.2:3b)
+├── Track 1:  [D] Ollama setup + model pull (llama3.2:3b)
 ├── Track 3:  Cache Layer testing with Redis
 └── Track 4:  Security Layer unit tests
 
@@ -158,7 +158,7 @@ Simple FastAPI + JSON file store.
 ```
 services/model-registry/
 ├── main.py             # FastAPI app
-├── models.json         # seed data with phi3:mini, llama3.2:3b
+├── models.json         # seed data with llama3.2:3b
 ├── requirements.txt    # fastapi, uvicorn, pydantic
 └── Dockerfile
 ```
@@ -173,7 +173,7 @@ PATCH /models/{name}/status
 GET  /health
 ```
 
-**Done when:** `GET /models/by-task/chat` returns phi3:mini in JSON.
+**Done when:** `GET /models/by-task/chat` returns llama3.2:3b in JSON.
 
 ---
 
@@ -207,7 +207,6 @@ GET  /health
 
 ```cmd
 # Install from ollama.com, then:
-ollama pull phi3:mini
 ollama pull llama3.2:3b
 
 # Keep running in background — Kubernetes services call it via host.docker.internal:11434
@@ -247,7 +246,7 @@ What it does:
 5. Writes `inference_complete` audit event
 6. Returns enriched IMF to Router
 
-**Done when:** Send an IMF to `/infer`, get back a real phi3:mini response in IMF format.
+**Done when:** Send an IMF to `/infer`, get back a real llama3.2:3b response in IMF format.
 
 ---
 
@@ -349,7 +348,7 @@ Routing flow:
 - Day 4: Wire up with real services but add mock fallbacks for each
 - Day 5: Full integration test through Router
 
-**Done when:** Send a `chat` IMF to `/route`, get back a real phi3:mini response, cache and audit records created.
+**Done when:** Send a `chat` IMF to `/route`, get back a real llama3.2:3b response, cache and audit records created.
 
 ---
 
@@ -382,7 +381,7 @@ What it does:
 7. Serialize IMF `response.content` back to OpenAI JSON
 8. Write `response_sent` audit event
 
-**Done when:** `curl -X POST http://localhost/v1/chat/completions ...` returns an OpenAI-format response powered by phi3:mini.
+**Done when:** `curl -X POST http://localhost/v1/chat/completions ...` returns an OpenAI-format response powered by llama3.2:3b.
 
 ---
 
@@ -564,7 +563,7 @@ Deploy mock versions to Kubernetes early so downstream teams can develop against
 The POC is complete and ready to demo when all of the following pass:
 
 ```
-[ ] curl /v1/chat/completions returns a real LLM response via phi3:mini
+[ ] curl /v1/chat/completions returns a real LLM response via llama3.2:3b
 [ ] Injection attempt returns 400 with security_block reason
 [ ] PII in prompt is masked before reaching inference (check audit log)
 [ ] Same prompt twice → second response shows cache.lookup_hit = true
@@ -584,7 +583,7 @@ The POC is complete and ready to demo when all of the following pass:
 Follow this order — each item unblocks the next:
 1. `[A]` Shared IMF library
 2. `[B]` Model Registry + `[C]` Audit Store (both simple, no deps — do in one session)
-3. `[D]` Install Ollama, pull phi3:mini
+3. `[D]` Install Ollama, pull llama3.2:3b
 4. `[E]` Inference Adapter
 5. `[F]` Cache Layer (can do in parallel with step 4)
 6. `[G]` Security Layer (can do in parallel with steps 4–5)

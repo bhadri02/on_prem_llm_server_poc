@@ -59,9 +59,9 @@ services/model-registry/
 Stores model metadata in a JSON file. The Router calls this to know which model handles which task type.
 
 **Seed data in `models.json`** — pre-populate with:
-- `phi3:mini` → tasks: [chat, summarization, reasoning] → status: active
 - `llama3.2:3b` → tasks: [chat, summarization, reasoning] → status: active
-- `deepseek-coder:6.7b` → tasks: [code] → status: active
+- `llama3.2:3b` → tasks: [chat, summarization, reasoning] → status: active
+- `llama3.2:3b` → tasks: [code] → status: active
 
 **Key endpoints:**
 ```
@@ -75,7 +75,7 @@ GET  /health
 **How to test:**
 ```cmd
 curl http://localhost:5000/models/by-task/chat
-# Must return phi3:mini and llama3.2:3b
+# Must return llama3.2:3b and llama3.2:3b
 ```
 
 **Done when:** Router can fetch models and get a JSON list back. ~3 hours.
@@ -188,11 +188,11 @@ semantic_cache:{task_type}  → list of {key, embedding, response}
 
 # Write a cache entry
 curl -X POST http://localhost:8086/cache/write \
-  -d '{"messages":[{"role":"user","content":"what is kubernetes"}],"model":"phi3:mini","task_type":"chat","response_imf":{"response":{"content":"K8s is..."}}}'
+  -d '{"messages":[{"role":"user","content":"what is kubernetes"}],"model":"llama3.2:3b","task_type":"chat","response_imf":{"response":{"content":"K8s is..."}}}'
 
 # Lookup same prompt — should HIT
 curl -X POST http://localhost:8086/cache/lookup \
-  -d '{"messages":[{"role":"user","content":"what is kubernetes"}],"model":"phi3:mini","task_type":"chat"}'
+  -d '{"messages":[{"role":"user","content":"what is kubernetes"}],"model":"llama3.2:3b","task_type":"chat"}'
 # Returns: {"hit": true, "cache_type": "exact", ...}
 ```
 
@@ -289,7 +289,7 @@ curl -X POST http://localhost:8081/process/pre \
 ```cmd
 # Download from https://ollama.com/download/windows and install
 # Then pull models (takes 10-30 min depending on internet):
-ollama pull phi3:mini       ← 2.3 GB, fastest for demo
+ollama pull llama3.2:3b       ← 2.3 GB, fastest for demo
 ollama pull llama3.2:3b     ← 2.0 GB, better quality
 
 # Keep running — services reach it via host.docker.internal:11434
@@ -312,7 +312,7 @@ Receives an IMF from the Router, translates it to Ollama's `/api/chat` format, c
 **Translation: IMF → Ollama:**
 ```python
 ollama_payload = {
-    "model": imf["routing"]["selected_model"],    # e.g. "phi3:mini"
+    "model": imf["routing"]["selected_model"],    # e.g. "llama3.2:3b"
     "messages": imf["request"]["messages"],
     "stream": False,
     "options": {
@@ -344,11 +344,11 @@ GET  /health    ← calls Ollama /api/tags and returns status
 ```cmd
 curl -X POST http://localhost:8087/infer \
   -H "Content-Type: application/json" \
-  -d "{\"request_id\":\"r1\",\"routing\":{\"selected_model\":\"phi3:mini\"},\"request\":{\"messages\":[{\"role\":\"user\",\"content\":\"What is 2+2?\"}],\"max_tokens\":100,\"temperature\":0.7}}"
+  -d "{\"request_id\":\"r1\",\"routing\":{\"selected_model\":\"llama3.2:3b\"},\"request\":{\"messages\":[{\"role\":\"user\",\"content\":\"What is 2+2?\"}],\"max_tokens\":100,\"temperature\":0.7}}"
 # Returns: IMF with response.content = "4" (or similar)
 ```
 
-**Done when:** Real response from phi3:mini comes back in IMF format. ~3 hours.
+**Done when:** Real response from llama3.2:3b comes back in IMF format. ~3 hours.
 
 ---
 
@@ -487,11 +487,11 @@ default: chat
 `model_matrix.yaml` (fallback only):
 ```yaml
 task_defaults:
-  chat: phi3:mini
-  code: phi3:mini
-  reasoning: phi3:mini
-  summarization: phi3:mini
-  translation: phi3:mini
+  chat: llama3.2:3b
+  code: llama3.2:3b
+  reasoning: llama3.2:3b
+  summarization: llama3.2:3b
+  translation: llama3.2:3b
 ```
 
 **Key endpoint:**
@@ -512,7 +512,7 @@ POST /v1/chat/completions   ← Agent Framework's LangChain calls here
 curl -X POST http://localhost:8082/route \
   -H "Content-Type: application/json" \
   -d "{\"request_id\":\"r1\",\"user\":{\"user_id\":\"poc-user\",\"department\":\"poc\",\"roles\":[\"developer\"],\"auth_method\":\"api_key\"},\"request\":{\"messages\":[{\"role\":\"user\",\"content\":\"What is Kubernetes?\"}]},\"governance\":{\"content_safety_passed\":true}}"
-# Returns: IMF with response.content filled from phi3:mini
+# Returns: IMF with response.content filled from llama3.2:3b
 ```
 
 **Done when:** End-to-end flow works: Security → Router → Cache miss → Inference → response back. ~6 hours.
@@ -596,8 +596,8 @@ AUDIT_STORE_URL=http://audit-store:9200
 curl -X POST http://localhost:8080/v1/chat/completions \
   -H "X-Api-Key: poc-secret-key" \
   -H "Content-Type: application/json" \
-  -d "{\"model\":\"phi3:mini\",\"messages\":[{\"role\":\"user\",\"content\":\"What is 2+2?\"}]}"
-# Returns OpenAI-format JSON with answer from phi3:mini
+  -d "{\"model\":\"llama3.2:3b\",\"messages\":[{\"role\":\"user\",\"content\":\"What is 2+2?\"}]}"
+# Returns OpenAI-format JSON with answer from llama3.2:3b
 
 # Test auth failure
 curl -X POST http://localhost:8080/v1/chat/completions \
@@ -606,7 +606,7 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 # Returns: {"error": {"code": "401", "message": "Unauthorized"}}
 ```
 
-**Done when:** Full end-to-end curl works. Response comes from phi3:mini through all layers. ~5 hours.
+**Done when:** Full end-to-end curl works. Response comes from llama3.2:3b through all layers. ~5 hours.
 
 ---
 
@@ -647,7 +647,7 @@ from langchain_openai import ChatOpenAI
 llm = ChatOpenAI(
     base_url="http://api-gateway:8080/v1",
     api_key="poc-secret-key",
-    model="phi3:mini",
+    model="llama3.2:3b",
     temperature=0.7
 )
 ```
@@ -690,7 +690,7 @@ GET  /health
 curl -X POST http://localhost:8080/v1/chat/completions \
   -H "X-Api-Key: poc-secret-key" \
   -H "Content-Type: application/json" \
-  -d "{\"model\":\"phi3:mini\",\"messages\":[{\"role\":\"user\",\"content\":\"What is 15% of 340? Also tell me the current time.\"}],\"agentic\":true}"
+  -d "{\"model\":\"llama3.2:3b\",\"messages\":[{\"role\":\"user\",\"content\":\"What is 15% of 340? Also tell me the current time.\"}],\"agentic\":true}"
 # Agent should call calculator tool AND get_current_time tool, then synthesize answer
 ```
 
@@ -918,7 +918,7 @@ REM Test 1: Normal chat
 curl -X POST http://llm-poc.local/v1/chat/completions ^
   -H "X-Api-Key: poc-secret-key" ^
   -H "Content-Type: application/json" ^
-  -d "{\"model\":\"phi3:mini\",\"messages\":[{\"role\":\"user\",\"content\":\"What is 2+2?\"}]}"
+  -d "{\"model\":\"llama3.2:3b\",\"messages\":[{\"role\":\"user\",\"content\":\"What is 2+2?\"}]}"
 
 REM Test 2: Auth failure
 curl -X POST http://llm-poc.local/v1/chat/completions ^

@@ -87,34 +87,20 @@ rules:
 ```yaml
 # model_matrix.yaml
 models:
-  llama3-8b:
+  llama3.2-3b:
     backend: ollama
     endpoint: "http://inference-ollama:11434"
-    tasks: [chat, summarization, reasoning]
-    health_url: "http://inference-ollama:11434/api/tags"
-    fallback: mistral-7b
-
-  mistral-7b:
-    backend: ollama
-    endpoint: "http://inference-ollama:11434"
-    tasks: [chat, summarization, translation]
+    tasks: [chat, summarization, reasoning, code]
     health_url: "http://inference-ollama:11434/api/tags"
     fallback: null
 
-  deepseek-coder:
-    backend: ollama
-    endpoint: "http://inference-ollama:11434"
-    tasks: [code]
-    health_url: "http://inference-ollama:11434/api/tags"
-    fallback: llama3-8b
-
 task_defaults:
-  chat: llama3-8b
-  code: deepseek-coder
-  reasoning: llama3-8b
-  summarization: mistral-7b
-  translation: mistral-7b
-  embeddings: llama3-8b
+  chat: llama3.2-3b
+  code: llama3.2-3b
+  reasoning: llama3.2-3b
+  summarization: llama3.2-3b
+  translation: llama3.2-3b
+  embeddings: llama3.2-3b
 ```
 
 For POC, Ollama is the primary inference backend — it hosts multiple models on one node without GPU.
@@ -135,7 +121,7 @@ For POC, Ollama is the primary inference backend — it hosts multiple models on
     "task_type": "chat"
   },
   "routing": {
-    "selected_model": "llama3-8b",
+    "selected_model": "llama3.2-3b",
     "routing_mode": "auto",
     "fallback_level": 0
   },
