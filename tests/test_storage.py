@@ -72,7 +72,7 @@ def test_load_valid_json_loads_records(tmp_path):
     """load() with a valid models.json parses and loads all records into memory."""
     storage_path = str(tmp_path / "models.json")
 
-    record = make_record("llama3-8b")
+    record = make_record("llama3.2-3b")
     with open(storage_path, "w", encoding="utf-8") as fh:
         json.dump([record.model_dump(mode="json")], fh)
 
@@ -81,7 +81,7 @@ def test_load_valid_json_loads_records(tmp_path):
 
     records = mgr.get_all()
     assert len(records) == 1
-    assert records[0].name == "llama3-8b"
+    assert records[0].name == "llama3.2-3b"
     assert records[0].version == "1.0"
 
 

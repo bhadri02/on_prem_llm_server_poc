@@ -1,5 +1,5 @@
 ---
-inclusion: manual
+inclusion: always
 ---
 
 # Deployment Architecture — Kubernetes POC
@@ -211,13 +211,13 @@ kubectl rollout status deployment -n llm-poc
 
 # 6. Pre-pull Ollama models (one-time)
 kubectl exec -n llm-poc deploy/inference-ollama -- \
-  ollama pull llama3:8b
+  ollama pull llama3.2:3b
 
 # 7. Verify end-to-end with a test request
 curl -X POST http://llm-poc.local/v1/chat/completions \
   -H "X-Api-Key: poc-secret-key" \
   -H "Content-Type: application/json" \
-  -d '{"model": "llama3:8b", "messages": [{"role": "user", "content": "Hello!"}]}'
+  -d '{"model": "llama3.2:3b", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
 ---
@@ -302,7 +302,7 @@ done
 curl -s -X POST http://llm-poc.local/v1/chat/completions \
   -H "X-Api-Key: poc-secret-key" \
   -H "Content-Type: application/json" \
-  -d '{"model": "llama3:8b", "messages": [{"role": "user", "content": "What is 2+2?"}]}' \
+  -d '{"model": "llama3.2:3b", "messages": [{"role": "user", "content": "What is 2+2?"}]}' \
   | python3 -m json.tool
 
 # 3. Verify audit trail (use request_id from step 2)

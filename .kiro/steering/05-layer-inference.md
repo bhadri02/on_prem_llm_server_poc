@@ -33,10 +33,7 @@ Ollama is deployed as a Kubernetes Deployment with a persistent volume for model
 
 | Model | RAM Required | Use Case |
 |---|---|---|
-| `llama3.2:3b` | ~3 GB | Low-resource POC |
-| `mistral:7b` | ~5 GB | General chat |
-| `llama3:8b` | ~6 GB | General chat / reasoning |
-| `deepseek-coder:6.7b` | ~5 GB | Code generation |
+| `llama3.2:3b` | ~3 GB | Low-resource POC (selected) |
 
 Pull models via Ollama init container or post-deploy job.
 
@@ -61,7 +58,7 @@ POST http://inference-ollama:11434/api/chat
 Content-Type: application/json
 
 {
-  "model": "llama3:8b",
+  "model": "llama3.2:3b",
   "messages": [...],
   "stream": false,
   "options": {
@@ -146,9 +143,7 @@ service:
 
 models:
   preload:
-    - llama3:8b
-    - mistral:7b
-    # add deepseek-coder:6.7b if storage allows
+    - llama3.2:3b
 
 persistence:
   enabled: true
@@ -196,11 +191,11 @@ image:
   tag: "latest"
 
 model:
-  name: "meta-llama/Llama-3-8B-Instruct"
-  path: "/models/llama3-8b"
+  name: "meta-llama/Llama-3.2-3B-Instruct"
+  path: "/models/llama3.2-3b"
 
 env:
-  VLLM_MODEL: "/models/llama3-8b"
+  VLLM_MODEL: "/models/llama3.2-3b"
   MAX_MODEL_LEN: "4096"
   GPU_MEMORY_UTILIZATION: "0.85"
 

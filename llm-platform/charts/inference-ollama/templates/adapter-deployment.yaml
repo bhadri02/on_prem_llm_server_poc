@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "inference-ollama.fullname" . }}-adapter
+  labels:
+    {{- include "inference-ollama.adapterLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "inference-ollama.adapterSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "inference-ollama.adapterLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: inference-adapter
+          image: "{{ .Values.adapter.image.repository }}:{{ if .Values.adapter.image.tag }}{{ .Values.adapter.image.tag }}{{ else }}latest{{ end }}"
+          imagePullPolicy: {{ .Values.adapter.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8087
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: DEFAULT_MODEL
+              value: {{ .Values.adapter.env.DEFAULT_MODEL | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.adapter.env.LOG_LEVEL | quote }}
+            - name: OLLAMA_BASE_URL
+              value: {{ .Values.adapter.env.OLLAMA_BASE_URL | quote }}
+            - name: OLLAMA_TIMEOUT_SECONDS
+              value: {{ .Values.adapter.env.OLLAMA_TIMEOUT_SECONDS | quote }}
+            - name: DEFAULT_MAX_TOKENS
+              value: {{ .Values.adapter.env.DEFAULT_MAX_TOKENS | quote }}
+            - name: MAX_TOKENS_LIMIT
+              value: {{ .Values.adapter.env.MAX_TOKENS_LIMIT | quote }}
+            - name: DEFAULT_TEMPERATURE
+              value: {{ .Values.adapter.env.DEFAULT_TEMPERATURE | quote }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8087
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8087
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"

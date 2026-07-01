@@ -153,7 +153,7 @@ The POC proves the architecture works. It is **not** production-ready. This docu
 
 #### What We Built (POC)
 - Ollama deployed on Kubernetes with persistent model storage
-- Models: llama3:8b, mistral:7b, deepseek-coder:6.7b (CPU-capable)
+- Models: llama3.2:3b (CPU-capable)
 - IMF-to-Ollama adapter for request/response translation
 - Basic health check via Ollama `/api/tags`
 - Optional vLLM deployment spec (GPU-only)
