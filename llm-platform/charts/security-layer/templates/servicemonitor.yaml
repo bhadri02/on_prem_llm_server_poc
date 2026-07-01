@@ -1,0 +1,16 @@
+{{- if .Values.observability.metrics.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "security-layer.fullname" . }}
+  labels:
+    {{- include "security-layer.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "security-layer.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+{{- end }}

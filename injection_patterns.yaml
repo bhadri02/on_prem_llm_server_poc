@@ -1,0 +1,25 @@
+# Injection detection patterns for the Security & Governance Layer.
+#
+# Plain string entries are treated as literal case-insensitive substring
+# patterns (valid regex literals). Entries containing regex metacharacters
+# are compiled as full regular expressions via re.compile(p, re.IGNORECASE).
+#
+# Requirement 3.8: Injection_Detector SHALL treat plain keyword string entries
+# as literal case-insensitive substring patterns, and SHALL treat entries
+# containing regex metacharacters as compiled regular expression patterns
+# applied via re.search.
+
+patterns:
+  # --- Plain keyword patterns (literal substring match) ---
+  - "ignore previous instructions"
+  - "ignore all instructions"
+  - "you are now"
+  - "disregard your"
+  - "forget your training"
+  - "act as if"
+  - "pretend you are"
+  # --- Regex patterns (compiled via re.compile with re.IGNORECASE) ---
+  # Matches template injection tokens: {{ ... }}
+  - '\{\{.*\}\}'
+  # Matches PHP-style processing instruction tags: <? ... ?>
+  - '<\?.*\?>'

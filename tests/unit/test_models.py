@@ -359,3 +359,169 @@ class TestSummaryResponse:
     def test_missing_total_events_rejected(self):
         with pytest.raises(ValidationError):
             SummaryResponse(by_outcome={}, by_layer={})
+
+
+# ===========================================================================
+# Security Layer model tests (security_layer/models.py)
+# ===========================================================================
+
+from security_layer.models import (
+    GovernanceBlock,
+    IMFRequest,
+    Message,
+    RequestBlock,
+    ResponseBlock,
+)
+
+VALID_SL_UUID = "550e8400-e29b-41d4-a716-446655440000"
+
+MINIMAL_SL_REQUEST = {
+    "request_id": VALID_SL_UUID,
+    "request": {
+        "messages": [{"role": "user", "content": "Hello"}],
+    },
+}
+
+
+def make_sl_imf(**overrides) -> dict:
+    import copy
+    data = copy.deepcopy(MINIMAL_SL_REQUEST)
+    data.update(overrides)
+    return data
+
+
+# ---------------------------------------------------------------------------
+# IMFRequest — request_id validation
+# ---------------------------------------------------------------------------
+
+class TestIMFRequestRequestId:
+    def test_valid_uuid4_passes(self):
+        req = IMFRequest(**MINIMAL_SL_REQUEST)
+        assert req.request_id == VALID_SL_UUID
+
+    def test_non_uuid_string_raises_validation_error(self):
+        with pytest.raises(ValidationError) as exc_info:
+            IMFRequest(**make_sl_imf(request_id="not-a-uuid"))
+        errors = exc_info.value.errors()
+        assert any("request_id" in str(e["loc"]) for e in errors)
+
+    def test_empty_string_raises_validation_error(self):
+        with pytest.raises(ValidationError) as exc_info:
+            IMFRequest(**make_sl_imf(request_id=""))
+        errors = exc_info.value.errors()
+        assert any("request_id" in str(e["loc"]) for e in errors)
+
+    def test_uuid_wrong_version_raises_validation_error(self):
+        # version nibble '1' instead of '4'
+        bad = "550e8400-e29b-11d4-a716-446655440000"
+        with pytest.raises(ValidationError):
+            IMFRequest(**make_sl_imf(request_id=bad))
+
+    def test_uuid_invalid_variant_raises_validation_error(self):
+        # variant nibble '0' — not in [89ab]
+        bad = "550e8400-e29b-41d4-0716-446655440000"
+        with pytest.raises(ValidationError):
+            IMFRequest(**make_sl_imf(request_id=bad))
+
+    def test_another_valid_uuid4_passes(self):
+        uid = "123e4567-e89b-42d3-a456-426614174000"
+        req = IMFRequest(**make_sl_imf(request_id=uid))
+        assert req.request_id == uid
+
+
+# ---------------------------------------------------------------------------
+# IMFRequest — request.messages validation
+# ---------------------------------------------------------------------------
+
+class TestIMFRequestMessages:
+    def test_absent_messages_raises_validation_error(self):
+        """request.messages is required — omitting it raises ValidationError."""
+        data = {
+            "request_id": VALID_SL_UUID,
+            "request": {},  # messages key absent
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            IMFRequest(**data)
+        errors = exc_info.value.errors()
+        assert any("messages" in str(e["loc"]) for e in errors)
+
+    def test_empty_messages_list_raises_validation_error(self):
+        """request.messages must have at least one entry (min_length=1)."""
+        data = {
+            "request_id": VALID_SL_UUID,
+            "request": {"messages": []},
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            IMFRequest(**data)
+        errors = exc_info.value.errors()
+        assert any("messages" in str(e["loc"]) for e in errors)
+
+    def test_absent_request_block_raises_validation_error(self):
+        """The whole request block is required."""
+        with pytest.raises(ValidationError):
+            IMFRequest(request_id=VALID_SL_UUID)
+
+
+# ---------------------------------------------------------------------------
+# GovernanceBlock — default values match spec exactly
+# ---------------------------------------------------------------------------
+
+class TestGovernanceBlockDefaults:
+    def test_pii_masked_default(self):
+        assert GovernanceBlock().pii_masked is False
+
+    def test_pii_fields_detected_default(self):
+        assert GovernanceBlock().pii_fields_detected == []
+
+    def test_injection_score_default(self):
+        assert GovernanceBlock().injection_score == 0.0
+
+    def test_jailbreak_score_default(self):
+        assert GovernanceBlock().jailbreak_score == 0.0
+
+    def test_content_safety_passed_default(self):
+        assert GovernanceBlock().content_safety_passed is True
+
+    def test_human_approval_required_default(self):
+        assert GovernanceBlock().human_approval_required is False
+
+    def test_human_approval_status_default(self):
+        assert GovernanceBlock().human_approval_status == "not_required"
+
+    def test_policy_decisions_default(self):
+        assert GovernanceBlock().policy_decisions == []
+
+    def test_pii_fields_detected_instances_are_independent(self):
+        """Default list instances must not be shared between objects."""
+        g1 = GovernanceBlock()
+        g2 = GovernanceBlock()
+        g1.pii_fields_detected.append("EMAIL_ADDRESS")
+        assert g2.pii_fields_detected == []
+
+    def test_policy_decisions_instances_are_independent(self):
+        g1 = GovernanceBlock()
+        g2 = GovernanceBlock()
+        g1.policy_decisions.append("role_check_pass")
+        assert g2.policy_decisions == []
+
+
+# ---------------------------------------------------------------------------
+# ResponseBlock — content=None is valid
+# ---------------------------------------------------------------------------
+
+class TestResponseBlockOptionalContent:
+    def test_content_none_is_valid(self):
+        rb = ResponseBlock(content=None)
+        assert rb.content is None
+
+    def test_content_omitted_defaults_to_none(self):
+        rb = ResponseBlock()
+        assert rb.content is None
+
+    def test_finish_reason_none_is_valid(self):
+        rb = ResponseBlock(finish_reason=None)
+        assert rb.finish_reason is None
+
+    def test_content_with_value_is_valid(self):
+        rb = ResponseBlock(content="Hello world")
+        assert rb.content == "Hello world"
