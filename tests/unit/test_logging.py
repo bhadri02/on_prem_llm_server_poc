@@ -240,3 +240,197 @@ class TestGetLogger:
 
         assert l1 is l2
         assert len(l1.handlers) == 1
+
+
+# ===========================================================================
+# security_layer.logging_config tests
+# ---------------------------------------------------------------------------
+# security_layer.config.Settings has four required env vars.  We patch them
+# via monkeypatch (pytest fixture) or os.environ so the module imports cleanly.
+# ===========================================================================
+
+# Required env vars for security_layer.config.Settings to initialise
+_SL_ENV = {
+    "DOWNSTREAM_ROUTER_URL": "http://router:8082",
+    "AUDIT_STORE_URL": "http://audit:9200",
+    "AUDIT_API_KEY": "test-key",
+    "INJECTION_PATTERNS_PATH": "/tmp/patterns.yaml",
+}
+
+
+def _setup_sl_env():
+    """Patch required env vars so security_layer.config.Settings() succeeds."""
+    for k, v in _SL_ENV.items():
+        os.environ.setdefault(k, v)
+
+
+_setup_sl_env()
+
+
+def _make_sl_record(
+    message: str = "test message",
+    level: int = logging.INFO,
+    extra_fields: dict | None = None,
+) -> logging.LogRecord:
+    """Build a minimal LogRecord for testing the security_layer formatter."""
+    record = logging.LogRecord(
+        name="sl_test_logger",
+        level=level,
+        pathname=__file__,
+        lineno=0,
+        msg=message,
+        args=(),
+        exc_info=None,
+    )
+    if extra_fields is not None:
+        record.__dict__["extra_fields"] = extra_fields
+    return record
+
+
+class TestSecurityLayerJSONFormatter:
+    """Tests for security_layer.logging_config.JSONFormatter."""
+
+    def setup_method(self):
+        from security_layer.logging_config import JSONFormatter
+        self.formatter = JSONFormatter()
+
+    def test_output_is_valid_single_line_json(self):
+        """format() must return valid JSON with no embedded newlines."""
+        record = _make_sl_record("hello")
+        output = self.formatter.format(record)
+        parsed = json.loads(output)
+        assert isinstance(parsed, dict)
+        assert "\n" not in output
+
+    def test_mandatory_fields_present(self):
+        """timestamp, level, and message must all be present."""
+        record = _make_sl_record("check", level=logging.WARNING)
+        parsed = json.loads(self.formatter.format(record))
+        assert "timestamp" in parsed
+        assert "level" in parsed
+        assert "message" in parsed
+
+    def test_timestamp_iso8601_utc(self):
+        """timestamp must end with 'Z'."""
+        parsed = json.loads(self.formatter.format(_make_sl_record("ts")))
+        assert parsed["timestamp"].endswith("Z")
+
+    def test_level_field_matches_record(self):
+        """level field must match the log record's levelname."""
+        record = _make_sl_record(level=logging.ERROR)
+        parsed = json.loads(self.formatter.format(record))
+        assert parsed["level"] == "ERROR"
+
+    def test_message_field_matches_record(self):
+        """message field must equal the formatted log message."""
+        record = _make_sl_record("exact text here")
+        parsed = json.loads(self.formatter.format(record))
+        assert parsed["message"] == "exact text here"
+
+    def test_extra_fields_merged_at_top_level(self):
+        """Extra fields passed via extra_fields must appear at the top level."""
+        record = _make_sl_record(
+            "event",
+            extra_fields={"request_id": "abc-123", "latency_ms": 55},
+        )
+        parsed = json.loads(self.formatter.format(record))
+        assert parsed.get("request_id") == "abc-123"
+        assert parsed.get("latency_ms") == 55
+
+    def test_no_extra_fields_yields_three_keys(self):
+        """Without extra_fields only timestamp, level, message are present."""
+        record = _make_sl_record("clean")
+        parsed = json.loads(self.formatter.format(record))
+        assert set(parsed.keys()) == {"timestamp", "level", "message"}
+
+
+class TestSecurityLayerGetLogger:
+    """Tests for security_layer.logging_config.get_logger()."""
+
+    def _fresh_logger(self, name: str, log_level: str) -> logging.Logger:
+        """Return a fresh security_layer logger with the given level."""
+        import security_layer.logging_config as lc
+
+        # Remove any cached logger entry so get_logger starts from scratch.
+        if name in logging.Logger.manager.loggerDict:
+            logging.getLogger(name).handlers.clear()
+            del logging.Logger.manager.loggerDict[name]
+
+        mock_settings = MagicMock()
+        mock_settings.log_level = log_level
+        with patch.object(lc, "settings", mock_settings):
+            return lc.get_logger(name)
+
+    def test_logger_has_stream_handler(self):
+        """get_logger must attach exactly one StreamHandler to stdout."""
+        logger = self._fresh_logger("sl.test.handler", "INFO")
+        handlers = [h for h in logger.handlers if isinstance(h, logging.StreamHandler)]
+        assert len(handlers) == 1
+
+    def test_handler_uses_json_formatter(self):
+        """The StreamHandler must use JSONFormatter."""
+        import security_layer.logging_config as lc
+        logger = self._fresh_logger("sl.test.formatter", "INFO")
+        for h in logger.handlers:
+            assert isinstance(h.formatter, lc.JSONFormatter)
+
+    def test_propagate_is_false(self):
+        """Logger must not propagate records to the root logger."""
+        logger = self._fresh_logger("sl.test.propagate", "INFO")
+        assert logger.propagate is False
+
+    def test_unrecognised_log_level_defaults_to_info(self):
+        """Unknown LOG_LEVEL values must fall back to logging.INFO."""
+        for bad in ("VERBOSE", "TRACE", "NOTAREAL", "", "99"):
+            logger = self._fresh_logger(f"sl.test.fallback.{bad}", bad)
+            assert logger.level == logging.INFO, (
+                f"Expected INFO fallback for {bad!r}, got {logger.level}"
+            )
+
+    def test_known_log_levels_applied_correctly(self):
+        """Recognised level strings must map to their numeric equivalents."""
+        cases = {
+            "DEBUG": logging.DEBUG,
+            "INFO": logging.INFO,
+            "WARNING": logging.WARNING,
+            "ERROR": logging.ERROR,
+        }
+        for name, numeric in cases.items():
+            logger = self._fresh_logger(f"sl.test.level.{name}", name)
+            assert logger.level == numeric
+
+    def test_duplicate_handlers_not_added(self):
+        """Calling get_logger twice with the same name must not add handlers."""
+        import security_layer.logging_config as lc
+
+        name = "sl.test.no_dup"
+        if name in logging.Logger.manager.loggerDict:
+            logging.getLogger(name).handlers.clear()
+            del logging.Logger.manager.loggerDict[name]
+
+        mock_settings = MagicMock()
+        mock_settings.log_level = "INFO"
+        with patch.object(lc, "settings", mock_settings):
+            l1 = lc.get_logger(name)
+            l2 = lc.get_logger(name)
+
+        assert l1 is l2
+        assert len(l1.handlers) == 1
+
+    def test_emits_valid_json_to_stdout(self):
+        """End-to-end: logger emits valid JSON with all required fields."""
+        logger = self._fresh_logger("sl.test.emit", "INFO")
+        buf = StringIO()
+        for h in logger.handlers:
+            if isinstance(h, logging.StreamHandler):
+                h.stream = buf
+
+        logger.info("security event", extra={"extra_fields": {"layer": "security"}})
+        output = buf.getvalue().strip()
+
+        assert output
+        parsed = json.loads(output.split("\n")[0])
+        assert parsed["message"] == "security event"
+        assert parsed["layer"] == "security"
+        assert parsed["level"] == "INFO"
+        assert parsed["timestamp"].endswith("Z")
