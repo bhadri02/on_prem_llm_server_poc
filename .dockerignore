@@ -1,9 +1,42 @@
-__pycache__
-*.pyc
+# Version control
 .git
+.gitignore
+
+# Python bytecode
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Tests (not needed in the container image)
 tests/
-*.md
+
+# Kiro spec/steering files
 .kiro/
+
+# Python packaging artifacts
 *.egg-info
+*.dist-info
+
+# Virtual environments
 .venv
 venv
+env
+
+# Hypothesis test database
+.hypothesis/
+.pytest_cache/
+
+# Documentation / local-only files
+*.md
+LOCAL_DEMO_SETUP.md
+POC_to_Production_Gap_Analysis.md
+LAYER_WISE_IMPLEMENTATION.md
+enterprise_onprem_LLM_platform_framework.md
+
+# Other service packages (only security_layer/ is needed for this image)
+audit_store/
+model_registry/
+seed/
+llm-platform/

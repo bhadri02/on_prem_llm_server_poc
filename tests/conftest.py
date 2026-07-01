@@ -1,12 +1,26 @@
 """
-Shared pytest fixtures for the Model Registry test suite.
+Shared pytest fixtures for the Model Registry and Security & Governance Layer
+test suites.
 
-Provides:
+Model Registry fixtures:
   - settings_override: patches STORAGE_PATH and REGISTRY_API_KEY env vars
     and clears the get_settings() lru_cache so every test starts clean.
   - async_client: an httpx.AsyncClient backed by the real FastAPI app with
     the lifespan context manager running (storage loaded, _ready = True).
+
+Security & Governance Layer fixtures:
+  - security_test_app: FastAPI app with a mock lifespan (no real env vars
+    required, no Presidio loading).
+  - security_async_client: httpx.AsyncClient wired to security_test_app.
+  - reset_prometheus_registry: autouse fixture that resets security metric
+    counters/histograms between tests.
+  - mock_router_response: factory fixture for constructing mock router
+    responses; companion to patching forward_to_router.
 """
+
+import re
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -19,6 +33,11 @@ pytest_plugins = ("anyio",)
 
 # Fixed API key used across all tests that exercise auth
 TEST_KEY = "test-secret-key"
+
+
+# ===========================================================================
+# Model Registry fixtures (unchanged)
+# ===========================================================================
 
 
 @pytest.fixture(autouse=True)
@@ -64,3 +83,140 @@ async def async_client(settings_override):
             base_url="http://test",
         ) as client:
             yield client
+
+
+# ===========================================================================
+# Security & Governance Layer fixtures
+# ===========================================================================
+
+
+@pytest.fixture
+async def security_test_app(tmp_path):
+    """FastAPI app for the Security & Governance Layer with a mock lifespan.
+
+    Bypasses the real lifespan (which calls sys.exit when env vars are
+    missing and spins up Presidio). Instead, directly populates app.state
+    with minimal test doubles so that route handlers can run.
+
+    PII is disabled (pii_enabled=False) to avoid the heavy Presidio model
+    download in tests.
+    """
+    from security_layer.content_safety import BLOCKLIST
+    from security_layer.injection import load_injection_patterns
+    from security_layer.main import app as _security_app
+
+    # Write a minimal patterns file
+    patterns_file = tmp_path / "injection_patterns.yaml"
+    patterns_file.write_text(
+        "patterns:\n"
+        "  - 'ignore previous instructions'\n"
+        "  - 'you are now'\n"
+        "  - 'pretend you are'\n"
+    )
+    patterns = load_injection_patterns(str(patterns_file))
+
+    # Build a mock settings object — all required fields are present
+    mock_settings = MagicMock()
+    mock_settings.pii_enabled = False
+    mock_settings.downstream_router_url = "http://mock-router:8082"
+    mock_settings.audit_store_url = "http://mock-audit:9200"
+    mock_settings.audit_api_key = "test-key"
+    mock_settings.injection_patterns_path = str(patterns_file)
+    mock_settings.log_level = "WARNING"
+
+    @asynccontextmanager
+    async def _mock_lifespan(application):
+        """Replace the real lifespan with a no-op that pre-populates app.state."""
+        application.state.settings = mock_settings
+        application.state.patterns = patterns
+        application.state.analyzer = None   # PII disabled
+        application.state.anonymizer = None
+        application.state.blocklist = BLOCKLIST
+        yield
+
+    # Swap the lifespan on the FastAPI router so ASGITransport uses ours
+    original_lifespan = _security_app.router.lifespan_context
+    _security_app.router.lifespan_context = _mock_lifespan
+
+    yield _security_app
+
+    # Restore original lifespan so other tests are not affected
+    _security_app.router.lifespan_context = original_lifespan
+
+
+@pytest.fixture
+async def security_async_client(security_test_app):
+    """Async httpx client wired to the security_test_app via ASGITransport."""
+    async with AsyncClient(
+        transport=ASGITransport(app=security_test_app),
+        base_url="http://test",
+    ) as client:
+        yield client
+
+
+@pytest.fixture(autouse=True, scope="function")
+def reset_prometheus_registry():
+    """Reset Security Layer Prometheus metric counters between tests.
+
+    Clears the internal ``_metrics`` dict on each Counter and Histogram so
+    that label-combination child objects from one test do not bleed into the
+    next.  This avoids cumulative counter drift across the test session.
+
+    Only touches the four security-layer metrics; model-registry and
+    audit-store metrics are left alone.
+    """
+    import security_layer.metrics as sl_metrics  # noqa: import inside fixture is intentional
+
+    _metric_objects = [
+        sl_metrics.requests_total,
+        sl_metrics.latency,
+        sl_metrics.pii_entities_total,
+        sl_metrics.blocks_total,
+    ]
+
+    # Clear before the test
+    for metric in _metric_objects:
+        try:
+            metric._metrics.clear()
+        except AttributeError:
+            pass
+
+    yield
+
+    # Clear after the test as well for defensive cleanup
+    for metric in _metric_objects:
+        try:
+            metric._metrics.clear()
+        except AttributeError:
+            pass
+
+
+@pytest.fixture
+def mock_router_response():
+    """Factory fixture that creates httpx.Response objects for router mocking.
+
+    Usage in tests::
+
+        def test_something(mock_router_response):
+            resp = mock_router_response(200, {"request_id": "abc", "response": {"content": "ok"}})
+
+    Returns a callable that accepts ``status_code`` and optional ``body`` and
+    produces an ``httpx.Response``.  Use alongside
+    ``unittest.mock.patch("security_layer.router_client.forward_to_router", ...)``.
+    """
+    import json as _json
+    import httpx as _httpx
+
+    def _factory(status_code: int = 200, body: dict | None = None) -> _httpx.Response:
+        if body is None:
+            body = {
+                "request_id": "00000000-0000-4000-8000-000000000000",
+                "response": {"content": "ok"},
+            }
+        return _httpx.Response(
+            status_code=status_code,
+            content=_json.dumps(body).encode(),
+            headers={"content-type": "application/json"},
+        )
+
+    return _factory
