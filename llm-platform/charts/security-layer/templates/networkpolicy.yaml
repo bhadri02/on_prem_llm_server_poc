@@ -12,36 +12,17 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Allow API traffic (port 8081) from the API Gateway namespace only
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: llm-api-gateway
-      ports:
-        - protocol: TCP
-          port: 8081
-    # Allow metrics scraping (port 9090) from the observability namespace only
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: llm-observability
-      ports:
-        - protocol: TCP
-          port: 9090
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
   egress:
-    # Allow outbound to the Intelligent Router (port 8082)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
     - ports:
-        - protocol: TCP
-          port: 8082
-    # Allow outbound to the Audit Store (port 9200)
-    - ports:
-        - protocol: TCP
-          port: 9200
-    # Allow outbound to the OTel collector (port 4317)
-    - ports:
-        - protocol: TCP
-          port: 4317
-    # Allow DNS resolution
-    - ports:
-        - protocol: UDP
-          port: 53
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

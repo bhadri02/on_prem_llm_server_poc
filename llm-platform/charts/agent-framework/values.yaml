@@ -1,0 +1,65 @@
+replicaCount: 1
+
+image:
+  repository: registry.local/agent-framework
+  tag: ""
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8083
+
+metricsPort: 9090
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "256Mi"
+  limits:
+    cpu: "1"
+    memory: "1Gi"
+
+autoscaling:
+  enabled: false
+
+vault:
+  enabled: false
+
+secretRef:
+  name: "llm-poc-secrets"
+
+serviceAccount:
+  name: "llm-platform"
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8083
+  initialDelaySeconds: 15
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 1
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8083
+  initialDelaySeconds: 15
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 1
+
+env: {}
+
+persistence:
+  enabled: false
+  size: ""
+  storageClass: ""
+  mountPath: "/data"
+
+ingress:
+  enabled: false
+  host: ""
+  servicePort: 8083

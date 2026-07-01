@@ -1,0 +1,28 @@
+{{- if .Values.jaeger.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "observability.fullname" . }}-jaeger
+  labels:
+    {{- include "observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: jaeger
+spec:
+  type: ClusterIP
+  ports:
+    - name: ui
+      port: 16686
+      targetPort: 16686
+      protocol: TCP
+    - name: compact
+      port: 6831
+      targetPort: 6831
+      protocol: UDP
+    - name: collector
+      port: 14268
+      targetPort: 14268
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: observability
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: jaeger
+{{- end }}

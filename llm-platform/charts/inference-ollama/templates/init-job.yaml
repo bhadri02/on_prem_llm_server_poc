@@ -11,7 +11,8 @@ metadata:
     helm.sh/hook-weight: "0"
     helm.sh/hook-delete-policy: before-hook-creation
 spec:
-  backoffLimit: 3
+  backoffLimit: {{ .Values.initJob.backoffLimit | default 2 }}
+  activeDeadlineSeconds: 6000
   template:
     metadata:
       labels:

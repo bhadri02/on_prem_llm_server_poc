@@ -1,0 +1,40 @@
+Enterprise On-Prem LLM Platform — POC
+
+Release: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+Enabled sub-charts:
+{{- if .Values.apiGateway.enabled }}
+  - api-gateway     → http://api-gateway:8080
+{{- end }}
+{{- if .Values.securityLayer.enabled }}
+  - security-layer  → http://security-layer:8081
+{{- end }}
+{{- if .Values.router.enabled }}
+  - router          → http://router:8082
+{{- end }}
+{{- if .Values.cache.enabled }}
+  - cache           → http://cache:8086
+{{- end }}
+{{- if .Values.inferenceOllama.enabled }}
+  - inference-ollama → http://inference-ollama:11434
+{{- end }}
+{{- if .Values.agentFramework.enabled }}
+  - agent-framework → http://agent-framework:8083
+{{- end }}
+{{- if .Values.modelRegistry.enabled }}
+  - model-registry  → http://model-registry:5000
+{{- end }}
+{{- if .Values.auditStore.enabled }}
+  - audit-store     → http://audit-store:9200
+{{- end }}
+{{- if .Values.adminPortal.enabled }}
+  - admin-portal    → http://admin-portal:8084
+{{- end }}
+{{- if .Values.observability.enabled }}
+  - observability   → http://observability-grafana:3000
+{{- end }}
+
+To deploy: helm upgrade --install {{ .Release.Name }} ./llm-platform \
+  --namespace {{ .Release.Namespace }} \
+  --values ./llm-platform/values-poc.yaml

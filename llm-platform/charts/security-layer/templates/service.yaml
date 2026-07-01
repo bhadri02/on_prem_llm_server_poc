@@ -6,14 +6,14 @@ metadata:
     {{- include "security-layer.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
-  selector:
-    {{- include "security-layer.selectorLabels" . | nindent 4 }}
   ports:
     - name: http
-      port: 8081
-      targetPort: http
+      port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.port }}
       protocol: TCP
     - name: metrics
-      port: 9090
-      targetPort: metrics
+      port: {{ .Values.metricsPort }}
+      targetPort: {{ .Values.metricsPort }}
       protocol: TCP
+  selector:
+    {{- include "security-layer.selectorLabels" . | nindent 4 }}

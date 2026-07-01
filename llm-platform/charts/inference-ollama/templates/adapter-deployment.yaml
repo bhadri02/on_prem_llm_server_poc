@@ -14,9 +14,10 @@ spec:
       labels:
         {{- include "inference-ollama.adapterLabels" . | nindent 8 }}
     spec:
+      serviceAccountName: {{ .Values.serviceAccount.name | default "llm-platform" }}
       containers:
         - name: inference-adapter
-          image: "{{ .Values.adapter.image.repository }}:{{ if .Values.adapter.image.tag }}{{ .Values.adapter.image.tag }}{{ else }}latest{{ end }}"
+          image: "{{ .Values.adapter.image.repository }}:{{ .Values.adapter.image.tag | default "latest" }}"
           imagePullPolicy: {{ .Values.adapter.image.pullPolicy }}
           ports:
             - name: http
@@ -25,6 +26,9 @@ spec:
             - name: metrics
               containerPort: 9090
               protocol: TCP
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secretRef.name }}
           env:
             - name: DEFAULT_MODEL
               value: {{ .Values.adapter.env.DEFAULT_MODEL | quote }}
@@ -41,21 +45,9 @@ spec:
             - name: DEFAULT_TEMPERATURE
               value: {{ .Values.adapter.env.DEFAULT_TEMPERATURE | quote }}
           livenessProbe:
-            httpGet:
-              path: /health
-              port: 8087
-            initialDelaySeconds: 20
-            periodSeconds: 15
-            timeoutSeconds: 5
-            failureThreshold: 3
+            {{- toYaml .Values.adapter.livenessProbe | nindent 12 }}
           readinessProbe:
-            httpGet:
-              path: /health
-              port: 8087
-            initialDelaySeconds: 20
-            periodSeconds: 15
-            timeoutSeconds: 5
-            failureThreshold: 3
+            {{- toYaml .Values.adapter.readinessProbe | nindent 12 }}
           resources:
             requests:
               cpu: "200m"

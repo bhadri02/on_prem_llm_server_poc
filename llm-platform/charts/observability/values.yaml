@@ -1,0 +1,25 @@
+kubePrometheusStack:
+  enabled: true
+
+kube-prometheus-stack:
+  grafana:
+    adminPassword: "poc-admin"
+    service:
+      type: ClusterIP
+    sidecar:
+      datasources:
+        enabled: true
+  alertmanager:
+    enabled: false
+  prometheus:
+    prometheusSpec:
+      retention: "7d"
+      serviceMonitorNamespaceSelector: {}
+
+jaeger:
+  enabled: false
+
+ingress:
+  enabled: false
+  host: "grafana-poc.local"
+  servicePort: 3000
