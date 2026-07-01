@@ -1,0 +1,6 @@
+apiVersion: v2
+name: admin-portal
+description: "Admin Portal sub-chart — platform administration UI for the LLM platform POC"
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,14 +1,7 @@
-{{/*
-Expand the name of the chart.
-*/}}
 {{- define "security-layer.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{/*
-Create a default fully qualified app name.
-Truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
-*/}}
 {{- define "security-layer.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
@@ -22,24 +15,10 @@ Truncate at 63 chars because some Kubernetes name fields are limited to this (by
 {{- end }}
 {{- end }}
 
-{{/*
-Create chart name and version as used by the chart label.
-*/}}
 {{- define "security-layer.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{/*
-Selector labels
-*/}}
-{{- define "security-layer.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "security-layer.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end }}
-
-{{/*
-Common labels
-*/}}
 {{- define "security-layer.labels" -}}
 helm.sh/chart: {{ include "security-layer.chart" . }}
 {{ include "security-layer.selectorLabels" . }}
@@ -47,4 +26,9 @@ helm.sh/chart: {{ include "security-layer.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{- define "security-layer.selectorLabels" -}}
+app.kubernetes.io/name: security-layer
+app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}

@@ -2,56 +2,62 @@ replicaCount: 1
 
 image:
   repository: registry.local/model-registry
-  tag: ""          # set via CI --set image.tag=<sha>
+  tag: ""          # set via CI --set image.tag=<sha>; empty → "latest" in template
   pullPolicy: IfNotPresent
 
 service:
   type: ClusterIP
   port: 5000
 
+metricsPort: 9090
+
 env:
   LOG_LEVEL: "INFO"
   STORAGE_PATH: "/data/models.json"
 
-# REGISTRY_API_KEY injected from a K8s Secret — never stored in values.yaml
-apiKeySecret:
-  name: model-registry-secret
-  key: registry-api-key
+secretRef:
+  name: "llm-poc-secrets"
+
+serviceAccount:
+  name: "llm-platform"
 
 persistence:
-  enabled: true       # always true; no ephemeral path supported
-  size: 1Gi
+  enabled: true
+  size: "2Gi"
   accessMode: ReadWriteOnce
   storageClass: ""    # uses cluster default when empty
+  mountPath: "/data"
 
 resources:
   requests:
     cpu: "100m"
-    memory: "128Mi"
-  limits:
-    cpu: "300m"
     memory: "256Mi"
+  limits:
+    cpu: "1"
+    memory: "1Gi"
 
 autoscaling:
   enabled: false      # POC: single replica only
+
+vault:
+  enabled: false      # Phase 2
 
 livenessProbe:
   httpGet:
     path: /health
     port: 5000
-  initialDelaySeconds: 10
+  initialDelaySeconds: 15
   periodSeconds: 15
-  timeoutSeconds: 2
+  timeoutSeconds: 5
   failureThreshold: 3
+  successThreshold: 1
 
 readinessProbe:
   httpGet:
     path: /health
     port: 5000
-  initialDelaySeconds: 10
+  initialDelaySeconds: 15
   periodSeconds: 15
-  timeoutSeconds: 2
+  timeoutSeconds: 5
   failureThreshold: 3
-
-vault:
-  enabled: false      # Phase 2
+  successThreshold: 1

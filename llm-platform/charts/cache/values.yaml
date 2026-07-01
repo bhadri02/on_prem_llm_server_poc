@@ -11,6 +11,12 @@ service:
 
 metricsPort: 9090
 
+secretRef:
+  name: "llm-poc-secrets"
+
+serviceAccount:
+  name: "llm-platform"
+
 env:
   LOG_LEVEL: "INFO"
   # NOTE: REDIS_URL uses the Bitnami redis sub-chart naming convention.
@@ -33,6 +39,7 @@ redis:
     persistence:
       enabled: true
       size: 5Gi
+      storageClass: ""  # empty = use cluster default StorageClass
 
 resources:
   requests:
@@ -54,8 +61,9 @@ livenessProbe:
     port: 8086
   initialDelaySeconds: 15
   periodSeconds: 15
-  timeoutSeconds: 2
+  timeoutSeconds: 5
   failureThreshold: 3
+  successThreshold: 1
 
 readinessProbe:
   httpGet:
@@ -63,5 +71,6 @@ readinessProbe:
     port: 8086
   initialDelaySeconds: 15
   periodSeconds: 15
-  timeoutSeconds: 2
+  timeoutSeconds: 5
   failureThreshold: 3
+  successThreshold: 1

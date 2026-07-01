@@ -9,7 +9,11 @@ spec:
   ports:
     - name: http
       port: {{ .Values.service.port }}
-      targetPort: 5000
+      targetPort: {{ .Values.service.port }}
+      protocol: TCP
+    - name: metrics
+      port: {{ .Values.metricsPort }}
+      targetPort: {{ .Values.metricsPort }}
       protocol: TCP
   selector:
     {{- include "model-registry.selectorLabels" . | nindent 4 }}
