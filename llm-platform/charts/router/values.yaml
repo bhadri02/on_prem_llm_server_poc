@@ -1,3 +1,7 @@
+# Default values for the Intelligent Router Helm chart (POC).
+# All production-deferred features (HPA, Vault, NetworkPolicy, mTLS) are
+# disabled. Override AUDIT_STORE_URL at deploy time via --set or a Secret.
+
 replicaCount: 1
 
 image:
