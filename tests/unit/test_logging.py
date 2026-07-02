@@ -434,3 +434,208 @@ class TestSecurityLayerGetLogger:
         assert parsed["layer"] == "security"
         assert parsed["level"] == "INFO"
         assert parsed["timestamp"].endswith("Z")
+
+
+# ===========================================================================
+# intelligent_router.logging_config tests
+# ---------------------------------------------------------------------------
+# intelligent_router.config.Settings has three required env vars.
+# We patch them via os.environ so the module imports cleanly.
+# ===========================================================================
+
+# Required env vars for intelligent_router.config.Settings to initialise
+_IR_ENV = {
+    "MODEL_MATRIX_PATH": "/tmp/model_matrix.yaml",
+    "TASK_RULES_PATH": "/tmp/task_rules.yaml",
+    "AUDIT_STORE_URL": "http://audit:9200",
+}
+
+
+def _setup_ir_env():
+    """Patch required env vars so intelligent_router.config.Settings() succeeds."""
+    for k, v in _IR_ENV.items():
+        os.environ.setdefault(k, v)
+
+
+_setup_ir_env()
+
+
+def _make_ir_record(
+    message: str = "test message",
+    level: int = logging.INFO,
+    extra_fields: dict | None = None,
+) -> logging.LogRecord:
+    """Build a minimal LogRecord for testing the intelligent_router formatter."""
+    record = logging.LogRecord(
+        name="ir_test_logger",
+        level=level,
+        pathname=__file__,
+        lineno=0,
+        msg=message,
+        args=(),
+        exc_info=None,
+    )
+    if extra_fields is not None:
+        record.__dict__["extra_fields"] = extra_fields
+    return record
+
+
+class TestIntelligentRouterJSONFormatter:
+    """Tests for intelligent_router.logging_config.JSONFormatter."""
+
+    def setup_method(self):
+        from intelligent_router.logging_config import JSONFormatter
+        self.formatter = JSONFormatter()
+
+    def test_output_is_valid_single_line_json(self):
+        """format() must return valid JSON with no embedded newlines."""
+        record = _make_ir_record("hello router")
+        output = self.formatter.format(record)
+        parsed = json.loads(output)  # raises if not valid JSON
+        assert isinstance(parsed, dict)
+        assert "\n" not in output
+
+    def test_mandatory_fields_present(self):
+        """timestamp, level, and message must all be present."""
+        record = _make_ir_record("check fields", level=logging.WARNING)
+        parsed = json.loads(self.formatter.format(record))
+        assert "timestamp" in parsed
+        assert "level" in parsed
+        assert "message" in parsed
+
+    def test_timestamp_is_iso8601_utc(self):
+        """timestamp must be an ISO-8601 UTC string ending with 'Z'."""
+        record = _make_ir_record("ts check")
+        parsed = json.loads(self.formatter.format(record))
+        ts = parsed["timestamp"]
+        assert isinstance(ts, str)
+        assert ts.endswith("Z"), f"Expected timestamp to end with 'Z', got: {ts!r}"
+
+    def test_extra_fields_merged_at_top_level(self):
+        """Fields in extra_fields must appear at the top level of the JSON object."""
+        record = _make_ir_record(
+            "event with extras",
+            extra_fields={"request_id": "req-abc", "task_type": "code"},
+        )
+        parsed = json.loads(self.formatter.format(record))
+        assert parsed.get("request_id") == "req-abc"
+        assert parsed.get("task_type") == "code"
+
+    def test_level_field_matches_log_call(self):
+        """level field must reflect the log level used (e.g. WARNING)."""
+        record = _make_ir_record("warn msg", level=logging.WARNING)
+        parsed = json.loads(self.formatter.format(record))
+        assert parsed["level"] == "WARNING"
+
+    def test_no_extra_fields_yields_three_keys(self):
+        """Without extra_fields, only timestamp, level, message are present."""
+        record = _make_ir_record("clean output")
+        parsed = json.loads(self.formatter.format(record))
+        assert set(parsed.keys()) == {"timestamp", "level", "message"}
+
+    def test_message_field_matches_record(self):
+        """message field must equal the formatted log message string."""
+        record = _make_ir_record("exact router message")
+        parsed = json.loads(self.formatter.format(record))
+        assert parsed["message"] == "exact router message"
+
+
+class TestIntelligentRouterGetLogger:
+    """Tests for intelligent_router.logging_config.get_logger()."""
+
+    def _fresh_logger(self, name: str, log_level: str) -> logging.Logger:
+        """Return a fresh intelligent_router logger configured with *log_level*."""
+        import intelligent_router.logging_config as lc
+
+        # Remove any cached logger so handlers don't accumulate across tests.
+        if name in logging.Logger.manager.loggerDict:
+            logging.getLogger(name).handlers.clear()
+            del logging.Logger.manager.loggerDict[name]
+
+        mock_settings = MagicMock()
+        mock_settings.log_level = log_level
+        with patch.object(lc, "settings", mock_settings):
+            return lc.get_logger(name)
+
+    def test_logger_has_stream_handler(self):
+        """get_logger must attach exactly one StreamHandler."""
+        logger = self._fresh_logger("ir.test.handler", "INFO")
+        handlers = [h for h in logger.handlers if isinstance(h, logging.StreamHandler)]
+        assert len(handlers) == 1
+
+    def test_handler_uses_json_formatter(self):
+        """The StreamHandler must use JSONFormatter."""
+        import intelligent_router.logging_config as lc
+        logger = self._fresh_logger("ir.test.formatter", "INFO")
+        for h in logger.handlers:
+            assert isinstance(h.formatter, lc.JSONFormatter)
+
+    def test_unrecognised_log_level_falls_back_to_info(self):
+        """Unknown LOG_LEVEL values must fall back to logging.INFO."""
+        for bad_level in ("VERBOSE", "TRACE", "NOTAREAL", "", "42"):
+            logger = self._fresh_logger(f"ir.test.fallback.{bad_level}", bad_level)
+            assert logger.level == logging.INFO, (
+                f"Expected INFO fallback for {bad_level!r}, got {logger.level}"
+            )
+
+    def test_valid_log_levels_are_set(self):
+        """Recognised level strings must map to their correct numeric level."""
+        cases = {
+            "DEBUG": logging.DEBUG,
+            "WARNING": logging.WARNING,
+            "ERROR": logging.ERROR,
+        }
+        for level_str, numeric in cases.items():
+            logger = self._fresh_logger(f"ir.test.level.{level_str}", level_str)
+            assert logger.level == numeric, (
+                f"Expected {numeric} for {level_str!r}, got {logger.level}"
+            )
+
+    def test_duplicate_handlers_not_added(self):
+        """Calling get_logger twice with the same name must not duplicate handlers."""
+        import intelligent_router.logging_config as lc
+
+        name = "ir.test.no_dup"
+        if name in logging.Logger.manager.loggerDict:
+            logging.getLogger(name).handlers.clear()
+            del logging.Logger.manager.loggerDict[name]
+
+        mock_settings = MagicMock()
+        mock_settings.log_level = "INFO"
+        with patch.object(lc, "settings", mock_settings):
+            l1 = lc.get_logger(name)
+            l2 = lc.get_logger(name)
+
+        assert l1 is l2
+        assert len(l1.handlers) == 1
+
+    def test_emits_valid_json_to_stdout(self):
+        """End-to-end: logger emits valid JSON with all required fields to stdout."""
+        logger = self._fresh_logger("ir.test.emit", "INFO")
+        buf = StringIO()
+        for h in logger.handlers:
+            if isinstance(h, logging.StreamHandler):
+                h.stream = buf
+
+        logger.info("router event", extra={"extra_fields": {"layer": "router"}})
+        output = buf.getvalue().strip()
+
+        assert output, "Expected at least one log line"
+        parsed = json.loads(output.split("\n")[0])
+        assert parsed["message"] == "router event"
+        assert parsed["layer"] == "router"
+        assert parsed["level"] == "INFO"
+        assert parsed["timestamp"].endswith("Z")
+
+    def test_level_field_matches_log_call(self):
+        """level field in JSON output must match the log method called."""
+        logger = self._fresh_logger("ir.test.level_field", "DEBUG")
+        buf = StringIO()
+        for h in logger.handlers:
+            if isinstance(h, logging.StreamHandler):
+                h.stream = buf
+
+        logger.warning("a warning")
+        output = buf.getvalue().strip()
+        parsed = json.loads(output.split("\n")[0])
+        assert parsed["level"] == "WARNING"

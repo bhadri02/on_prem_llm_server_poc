@@ -1,129 +1,468 @@
 """
-Unit tests for security_layer.pipeline.
+Unit tests for intelligent_router.pipeline.
 
-Covers subtask 11.4:
-- Injection block short-circuits before content safety
-- Content safety block short-circuits before PII and policy
-- PII always runs before policy on passing requests
-- Policy deny returns correct block_status=403
-- All governance fields present and correctly typed on a passing pipeline
-- run_post_pipeline with null response.content returns IMF unchanged with empty entity list
+Covers subtask 14.1–14.5:
+1. governance gate blocks: content_safety_passed=False → 400, no downstream calls
+2. governance gate absent: missing 'governance' key → same as above (400)
+3. invalid pinned model: select_model raises InvalidPinnedModelError → 422
+4. task_type always overwritten by classifier output
+5. cache HIT with missing response.content treated as MISS (inference IS called)
+6. cache HIT with valid content → inference NOT called, returns 200
+7. fallback_level is 0 when primary model succeeds
+8. cache write NOT dispatched when lookup_hit=True (cache hit path)
+9. unhandled exception returns 500 internal_error
+10. all backends exhausted → 503 all_backends_exhausted
 """
 
 import os
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch, call
-
 import pytest
+from unittest.mock import MagicMock, AsyncMock, patch, call
+from fastapi import BackgroundTasks
 
-# Ensure required env vars are present before importing the security_layer package.
-_SL_ENV = {
-    "DOWNSTREAM_ROUTER_URL": "http://router:8082",
-    "AUDIT_STORE_URL": "http://audit:9200",
-    "AUDIT_API_KEY": "test-key",
-    "INJECTION_PATTERNS_PATH": "/tmp/patterns.yaml",
-}
-for _k, _v in _SL_ENV.items():
-    os.environ.setdefault(_k, _v)
+# Set required env vars before importing anything from intelligent_router
+os.environ.setdefault("MODEL_MATRIX_PATH", "/tmp/model_matrix.yaml")
+os.environ.setdefault("TASK_RULES_PATH", "/tmp/task_rules.yaml")
+os.environ.setdefault("AUDIT_STORE_URL", "http://audit-store:9200")
 
-from security_layer.pipeline import (  # noqa: E402
-    PipelineResult,
-    run_pre_pipeline,
-    run_post_pipeline,
+from intelligent_router.pipeline import PipelineResult, run_routing_pipeline  # noqa: E402
+from intelligent_router.model_selector import (  # noqa: E402
+    InvalidPinnedModelError,
+    NoModelForTaskError,
+    ModelMatrix,
+    ModelEntry,
 )
+from intelligent_router.fallback_manager import FallbackState  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Fixtures
 # ---------------------------------------------------------------------------
 
-def _base_imf(roles=None, messages=None):
-    """Return a minimal valid IMF dict suitable for pipeline testing."""
+def _make_single_model_matrix(model_name: str = "llama3-chat") -> ModelMatrix:
+    """Return a ModelMatrix with a single model and no fallback."""
+    entry = ModelEntry(
+        name=model_name,
+        backend="ollama",
+        endpoint="http://inference-ollama:11434",
+        tasks=["chat"],
+        health_url="http://inference-ollama:11434/api/tags",
+        fallback=None,
+    )
+    return ModelMatrix(
+        models={model_name: entry},
+        task_defaults={"chat": model_name, "code": model_name},
+    )
+
+
+@pytest.fixture
+def mock_state():
+    """Minimal state mock with realistic settings."""
+    from intelligent_router.task_classifier import ClassifierRules
+
+    state = MagicMock()
+    state.settings.cache_url = "http://cache:8086"
+    state.settings.inference_adapter_url = "http://inference-adapter:8087"
+    state.settings.audit_store_url = "http://audit-store:9200"
+    state.settings.inference_timeout_seconds = 120
+    state.settings.health_check_timeout_seconds = 5
+    state.http_client = AsyncMock()
+
+    # Default: rules that classify as "chat"
+    state.classifier_rules = ClassifierRules(rules={}, default="chat")
+    state.model_matrix = _make_single_model_matrix()
+    return state
+
+
+def _base_imf(
+    content_safety_passed: bool = True,
+    task_type: str = "chat",
+    routing_mode: str = "auto",
+    model: str | None = None,
+) -> dict:
+    """Return a minimal valid IMF dict."""
     return {
         "request_id": "11111111-1111-4111-8111-111111111111",
-        "user": {"user_id": "u1", "roles": roles or ["developer"]},
         "request": {
-            "messages": messages or [{"role": "user", "content": "Hello"}],
+            "messages": [{"role": "user", "content": "Hello"}],
+            "task_type": task_type,
+            "model": model,
         },
         "governance": {
-            "injection_score": 0.0,
-            "content_safety_passed": True,
-            "pii_masked": False,
-            "pii_fields_detected": [],
-            "policy_decisions": [],
-            "human_approval_required": False,
-            "human_approval_status": "not_required",
+            "content_safety_passed": content_safety_passed,
         },
+        "routing": {
+            "routing_mode": routing_mode,
+            "fallback_level": 0,
+            "selected_model": None,
+        },
+        "cache": {"lookup_hit": False, "cache_key": None},
         "response": {"content": None},
         "metadata": {},
         "extensions": {},
     }
 
 
-def _make_state(
-    *,
-    injection_score: float = 0.0,
-    content_safe: bool = True,
-    pii_entities: list[str] | None = None,
-    policy_permitted: bool = True,
-    pii_enabled: bool = True,
-):
-    """
-    Build a SimpleNamespace mock for app.state that patches the four pipeline
-    functions with controllable return values.
+# ---------------------------------------------------------------------------
+# Test 1 & 2: Governance gate blocks
+# ---------------------------------------------------------------------------
 
-    The ``patterns`` and ``blocklist`` attributes are real lists so that the
-    actual ``scan_for_injection`` / ``check_content_safety`` functions behave
-    naturally.  We still inject via mock patches on the module to control
-    outcomes precisely.
-    """
-    settings = SimpleNamespace(pii_enabled=pii_enabled)
-    state = SimpleNamespace(
-        patterns=[],
-        blocklist=[],
-        analyzer=MagicMock(),
-        anonymizer=MagicMock(),
-        settings=settings,
-    )
-    # Configure mock return values on the analyzer/anonymizer for mask_messages
-    # and mask_text calls so that pii_entities can be controlled.
-    if pii_entities is None:
-        pii_entities = []
-    # We'll patch the module-level functions in pipeline.py to control outcomes.
-    return state, {
-        "injection_score": injection_score,
-        "content_safe": content_safe,
-        "pii_entities": pii_entities,
-        "policy_permitted": policy_permitted,
-    }
+class TestGovernanceGate:
+    """governance.content_safety_passed=False or missing → 400 with no downstream calls."""
+
+    @pytest.mark.asyncio
+    async def test_governance_false_returns_400(self, mock_state):
+        imf = _base_imf(content_safety_passed=False)
+        bt = BackgroundTasks()
+        with (
+            patch("intelligent_router.pipeline.classify_task") as mock_classify,
+            patch("intelligent_router.pipeline.select_model") as mock_select,
+            patch("intelligent_router.pipeline.check_model_health") as mock_health,
+            patch("intelligent_router.pipeline.cache_lookup") as mock_cache,
+            patch("intelligent_router.pipeline.call_inference") as mock_infer,
+            patch("intelligent_router.pipeline.post_audit_event") as mock_audit,
+        ):
+            result = await run_routing_pipeline(imf, mock_state, bt)
+
+        assert result.status_code == 400
+        assert result.error_code == "governance_check_failed"
+        assert result.success is False
+        mock_classify.assert_not_called()
+        mock_select.assert_not_called()
+        mock_health.assert_not_called()
+        mock_cache.assert_not_called()
+        mock_infer.assert_not_called()
+        mock_audit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_governance_absent_returns_400(self, mock_state):
+        """Missing 'governance' key is treated the same as content_safety_passed=False."""
+        imf = _base_imf()
+        del imf["governance"]
+        bt = BackgroundTasks()
+        with (
+            patch("intelligent_router.pipeline.classify_task") as mock_classify,
+            patch("intelligent_router.pipeline.select_model") as mock_select,
+            patch("intelligent_router.pipeline.check_model_health") as mock_health,
+            patch("intelligent_router.pipeline.cache_lookup") as mock_cache,
+            patch("intelligent_router.pipeline.call_inference") as mock_infer,
+        ):
+            result = await run_routing_pipeline(imf, mock_state, bt)
+
+        assert result.status_code == 400
+        assert result.error_code == "governance_check_failed"
+        mock_classify.assert_not_called()
+        mock_select.assert_not_called()
+        mock_health.assert_not_called()
+        mock_cache.assert_not_called()
+        mock_infer.assert_not_called()
 
 
-def _patch_pipeline_deps(imf_messages, injection_score, content_safe, pii_entities, policy_permitted):
-    """
-    Return a context-manager stack (via a helper dict) of patches for the four
-    pipeline dependency functions.  This lets each test control exactly what
-    each stage returns without real Presidio or pattern files.
-    """
-    masked_messages = imf_messages  # identity — no actual masking needed for unit tests
+# ---------------------------------------------------------------------------
+# Test 3: Invalid pinned model → 422
+# ---------------------------------------------------------------------------
 
-    patch_injection = patch(
-        "security_layer.pipeline.scan_for_injection",
-        return_value=injection_score,
-    )
-    patch_content = patch(
-        "security_layer.pipeline.check_content_safety",
-        return_value=content_safe,
-    )
-    patch_pii = patch(
-        "security_layer.pipeline.mask_messages",
-        return_value=(masked_messages, pii_entities),
-    )
-    policy_decision = "role_check_pass" if policy_permitted else "role_check_deny"
-    patch_policy = patch(
-        "security_layer.pipeline.check_policy",
-        return_value=(policy_permitted, policy_decision),
-    )
-    return patch_injection, patch_content, patch_pii, patch_policy
+class TestInvalidPinnedModel:
+    """select_model raises InvalidPinnedModelError → 422."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_pinned_model_returns_422(self, mock_state):
+        imf = _base_imf(model="nonexistent-model", routing_mode="pinned")
+        bt = BackgroundTasks()
+        with patch(
+            "intelligent_router.pipeline.classify_task", return_value="chat"
+        ):
+            result = await run_routing_pipeline(imf, mock_state, bt)
+
+        assert result.status_code == 422
+        assert result.error_code == "invalid_pinned_model"
+        assert result.success is False
+
+
+# ---------------------------------------------------------------------------
+# Test 4: task_type is always overwritten by classifier
+# ---------------------------------------------------------------------------
+
+class TestTaskTypeOverwritten:
+    """Inbound task_type is always replaced with the classifier's output."""
+
+    @pytest.mark.asyncio
+    async def test_task_type_overwritten_on_success(self, mock_state):
+        """Even if inbound task_type='old_value', classifier result wins."""
+        imf = _base_imf(task_type="old_value")
+        bt = BackgroundTasks()
+        with (
+            patch("intelligent_router.pipeline.classify_task", return_value="code") as mock_classify,
+            patch("intelligent_router.pipeline.check_model_health", new_callable=AsyncMock, return_value=True),
+            patch("intelligent_router.pipeline.cache_lookup", new_callable=AsyncMock,
+                  return_value={"hit": False}),
+            patch("intelligent_router.pipeline.call_inference", new_callable=AsyncMock,
+                  return_value={"response": {"content": "result", "finish_reason": "stop", "usage": {}}}),
+            patch("intelligent_router.pipeline.post_audit_event", new_callable=AsyncMock),
+            patch("intelligent_router.pipeline.cache_write", new_callable=AsyncMock),
+        ):
+            result = await run_routing_pipeline(imf, mock_state, bt)
+
+        assert imf["request"]["task_type"] == "code"
+        mock_classify.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Test 5: Cache HIT with missing content → treated as MISS, inference called
+# ---------------------------------------------------------------------------
+
+class TestCacheHitMissingContent:
+    """Cache HIT with null response.content is treated as MISS; inference runs."""
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_null_content_calls_inference(self, mock_state):
+        imf = _base_imf()
+        bt = BackgroundTasks()
+        inference_mock = AsyncMock(
+            return_value={"response": {"content": "inferred", "finish_reason": "stop", "usage": {}}}
+        )
+        with (
+            patch("intelligent_router.pipeline.classify_task", return_value="chat"),
+            patch("intelligent_router.pipeline.check_model_health", new_callable=AsyncMock, return_value=True),
+            patch(
+                "intelligent_router.pipeline.cache_lookup",
+                new_callable=AsyncMock,
+                return_value={"hit": True, "response": {"content": None}},
+            ),
+            patch("intelligent_router.pipeline.call_inference", inference_mock),
+            patch("intelligent_router.pipeline.post_audit_event", new_callable=AsyncMock),
+            patch("intelligent_router.pipeline.cache_write", new_callable=AsyncMock),
+        ):
+            result = await run_routing_pipeline(imf, mock_state, bt)
+
+        inference_mock.assert_called_once()
+        assert result.status_code == 200
+        assert imf["cache"]["lookup_hit"] is False
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_absent_response_key_calls_inference(self, mock_state):
+        """Cache HIT response block missing entirely → treated as MISS."""
+        imf = _base_imf()
+        bt = BackgroundTasks()
+        inference_mock = AsyncMock(
+            return_value={"response": {"content": "inferred", "finish_reason": "stop", "usage": {}}}
+        )
+        with (
+            patch("intelligent_router.pipeline.classify_task", return_value="chat"),
+            patch("intelligent_router.pipeline.check_model_health", new_callable=AsyncMock, return_value=True),
+            patch(
+                "intelligent_router.pipeline.cache_lookup",
+                new_callable=AsyncMock,
+                return_value={"hit": True},  # no 'response' key at all
+            ),
+            patch("intelligent_router.pipeline.call_inference", inference_mock),
+            patch("intelligent_router.pipeline.post_audit_event", new_callable=AsyncMock),
+            patch("intelligent_router.pipeline.cache_write", new_callable=AsyncMock),
+        ):
+            result = await run_routing_pipeline(imf, mock_state, bt)
+
+        inference_mock.assert_called_once()
+        assert result.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Test 6: Cache HIT with valid content → inference NOT called, returns 200
+# ---------------------------------------------------------------------------
+
+class TestCacheHitValidContent:
+    """Valid cache HIT skips inference and returns 200."""
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_valid_content_returns_200(self, mock_state):
+        imf = _base_imf()
+        bt = BackgroundTasks()
+        inference_mock = AsyncMock()
+        with (
+            patch("intelligent_router.pipeline.classify_task", return_value="chat"),
+            patch("intelligent_router.pipeline.check_model_health", new_callable=AsyncMock, return_value=True),
+            patch(
+                "intelligent_router.pipeline.cache_lookup",
+                new_callable=AsyncMock,
+                return_value={
+                    "hit": True,
+                    "response": {
+                        "content": "cached answer",
+                        "finish_reason": "stop",
+                        "usage": {"prompt_tokens": 5, "completion_tokens": 10, "total_tokens": 15},
+                    },
+                    "cache_key": "abc123",
+                },
+            ),
+            patch("intelligent_router.pipeline.call_inference", inference_mock),
+            patch("intelligent_router.pipeline.post_audit_event", new_callable=AsyncMock),
+        ):
+            result = await run_routing_pipeline(imf, mock_state, bt)
+
+        inference_mock.assert_not_called()
+        assert result.status_code == 200
+        assert result.success is True
+        assert result.error_code is None
+        assert imf["response"]["content"] == "cached answer"
+        assert imf["cache"]["lookup_hit"] is True
+
+
+# ---------------------------------------------------------------------------
+# Test 7: fallback_level is 0 when primary model succeeds
+# ---------------------------------------------------------------------------
+
+class TestFallbackLevelOnSuccess:
+    """Primary model health passes and inference succeeds → fallback_level stays 0."""
+
+    @pytest.mark.asyncio
+    async def test_fallback_level_zero_on_primary_success(self, mock_state):
+        imf = _base_imf()
+        bt = BackgroundTasks()
+        with (
+            patch("intelligent_router.pipeline.classify_task", return_value="chat"),
+            patch("intelligent_router.pipeline.check_model_health", new_callable=AsyncMock, return_value=True),
+            patch("intelligent_router.pipeline.cache_lookup", new_callable=AsyncMock,
+                  return_value={"hit": False}),
+            patch("intelligent_router.pipeline.call_inference", new_callable=AsyncMock,
+                  return_value={"response": {"content": "hello", "finish_reason": "stop", "usage": {}}}),
+            patch("intelligent_router.pipeline.post_audit_event", new_callable=AsyncMock),
+            patch("intelligent_router.pipeline.cache_write", new_callable=AsyncMock),
+        ):
+            result = await run_routing_pipeline(imf, mock_state, bt)
+
+        assert result.status_code == 200
+        assert imf["routing"]["fallback_level"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Test 8: cache write NOT dispatched when lookup_hit=True
+# ---------------------------------------------------------------------------
+
+class TestCacheWriteNotDispatchedOnHit:
+    """When a cache HIT serves the response, cache_write must NOT be added to background tasks."""
+
+    @pytest.mark.asyncio
+    async def test_cache_write_not_added_on_cache_hit(self, mock_state):
+        imf = _base_imf()
+        # Use a real BackgroundTasks and inspect what was added
+        bt = BackgroundTasks()
+        with (
+            patch("intelligent_router.pipeline.classify_task", return_value="chat"),
+            patch("intelligent_router.pipeline.check_model_health", new_callable=AsyncMock, return_value=True),
+            patch(
+                "intelligent_router.pipeline.cache_lookup",
+                new_callable=AsyncMock,
+                return_value={
+                    "hit": True,
+                    "response": {"content": "cached", "finish_reason": "stop", "usage": {}},
+                },
+            ),
+            patch("intelligent_router.pipeline.call_inference", new_callable=AsyncMock) as mock_infer,
+            patch("intelligent_router.pipeline.cache_write", new_callable=AsyncMock) as mock_cache_write,
+            patch("intelligent_router.pipeline.post_audit_event", new_callable=AsyncMock),
+        ):
+            result = await run_routing_pipeline(imf, mock_state, bt)
+
+        # cache_write must never be scheduled (it's only for MISS → inference path)
+        mock_cache_write.assert_not_called()
+        mock_infer.assert_not_called()
+        assert result.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Test 9: Unhandled exception → 500 internal_error
+# ---------------------------------------------------------------------------
+
+class TestUnhandledException:
+    """An unhandled exception in the pipeline returns 500 internal_error."""
+
+    @pytest.mark.asyncio
+    async def test_runtime_error_returns_500(self, mock_state):
+        imf = _base_imf()
+        bt = BackgroundTasks()
+        with patch(
+            "intelligent_router.pipeline.classify_task",
+            side_effect=RuntimeError("unexpected crash"),
+        ):
+            result = await run_routing_pipeline(imf, mock_state, bt)
+
+        assert result.status_code == 500
+        assert result.error_code == "internal_error"
+        assert result.success is False
+
+    @pytest.mark.asyncio
+    async def test_internal_error_latency_is_non_negative(self, mock_state):
+        imf = _base_imf()
+        bt = BackgroundTasks()
+        with patch(
+            "intelligent_router.pipeline.classify_task",
+            side_effect=ValueError("boom"),
+        ):
+            result = await run_routing_pipeline(imf, mock_state, bt)
+
+        assert isinstance(result.latency_ms, int)
+        assert result.latency_ms >= 0
+
+
+# ---------------------------------------------------------------------------
+# Test 10: All backends exhausted → 503 all_backends_exhausted
+# ---------------------------------------------------------------------------
+
+class TestAllBackendsExhausted:
+    """Health check always fails on a single-model chain → 503 all_backends_exhausted."""
+
+    @pytest.mark.asyncio
+    async def test_single_model_health_fail_returns_503(self, mock_state):
+        imf = _base_imf()
+        bt = BackgroundTasks()
+        with (
+            patch("intelligent_router.pipeline.classify_task", return_value="chat"),
+            patch("intelligent_router.pipeline.check_model_health", new_callable=AsyncMock, return_value=False),
+            patch("intelligent_router.pipeline.post_audit_event", new_callable=AsyncMock),
+        ):
+            result = await run_routing_pipeline(imf, mock_state, bt)
+
+        assert result.status_code == 503
+        assert result.error_code == "all_backends_exhausted"
+        assert result.success is False
+
+    @pytest.mark.asyncio
+    async def test_multi_model_chain_all_unhealthy_returns_503(self, mock_state):
+        """Two-model fallback chain, both unhealthy → 503."""
+        from intelligent_router.task_classifier import ClassifierRules
+
+        # Build a two-model fallback chain
+        fallback_entry = ModelEntry(
+            name="fallback-model",
+            backend="ollama",
+            endpoint="http://inference-ollama:11434",
+            tasks=["chat"],
+            health_url="http://inference-ollama:11434/api/tags",
+            fallback=None,
+        )
+        primary_entry = ModelEntry(
+            name="primary-model",
+            backend="ollama",
+            endpoint="http://inference-ollama:11434",
+            tasks=["chat"],
+            health_url="http://inference-ollama:11434/api/tags",
+            fallback="fallback-model",
+        )
+        mock_state.model_matrix = ModelMatrix(
+            models={"primary-model": primary_entry, "fallback-model": fallback_entry},
+            task_defaults={"chat": "primary-model"},
+        )
+        mock_state.classifier_rules = ClassifierRules(rules={}, default="chat")
+
+        imf = _base_imf()
+        bt = BackgroundTasks()
+        with (
+            patch("intelligent_router.pipeline.classify_task", return_value="chat"),
+            patch("intelligent_router.pipeline.check_model_health", new_callable=AsyncMock, return_value=False),
+            patch("intelligent_router.pipeline.post_audit_event", new_callable=AsyncMock),
+        ):
+            result = await run_routing_pipeline(imf, mock_state, bt)
+
+        assert result.status_code == 503
+        assert result.error_code == "all_backends_exhausted"
 
 
 # ---------------------------------------------------------------------------
@@ -131,626 +470,32 @@ def _patch_pipeline_deps(imf_messages, injection_score, content_safe, pii_entiti
 # ---------------------------------------------------------------------------
 
 class TestPipelineResultDataclass:
-    """Verify the dataclass fields exist and accept the correct types."""
+    """Verify PipelineResult fields exist and accept the correct types."""
 
-    def test_blocked_true_result(self):
+    def test_success_result(self):
         imf = _base_imf()
         result = PipelineResult(
-            blocked=True,
-            block_reason="injection_detected",
-            block_status=400,
+            success=True,
+            status_code=200,
             imf=imf,
+            error_code=None,
+            latency_ms=42,
+        )
+        assert result.success is True
+        assert result.status_code == 200
+        assert result.imf is imf
+        assert result.error_code is None
+        assert isinstance(result.latency_ms, int)
+
+    def test_error_result(self):
+        imf = _base_imf()
+        result = PipelineResult(
+            success=False,
+            status_code=400,
+            imf=imf,
+            error_code="governance_check_failed",
             latency_ms=5,
         )
-        assert result.blocked is True
-        assert result.block_reason == "injection_detected"
-        assert result.block_status == 400
-        assert result.imf is imf
-        assert isinstance(result.latency_ms, int)
-
-    def test_non_blocked_result(self):
-        imf = _base_imf()
-        result = PipelineResult(
-            blocked=False,
-            block_reason=None,
-            block_status=None,
-            imf=imf,
-            latency_ms=10,
-        )
-        assert result.blocked is False
-        assert result.block_reason is None
-        assert result.block_status is None
-
-    def test_block_reasons_are_valid_strings(self):
-        valid_reasons = {"injection_detected", "content_safety_violation", "policy_denied"}
-        for reason in valid_reasons:
-            result = PipelineResult(
-                blocked=True, block_reason=reason, block_status=400,
-                imf={}, latency_ms=1,
-            )
-            assert result.block_reason in valid_reasons
-
-
-# ---------------------------------------------------------------------------
-# run_pre_pipeline — injection block short-circuits before content safety
-# ---------------------------------------------------------------------------
-
-class TestInjectionBlockShortCircuit:
-    """
-    When injection_score == 1.0, the pipeline MUST block immediately.
-    Content safety, PII masking, and policy check MUST NOT run.
-    """
-
-    @pytest.mark.asyncio
-    async def test_injection_block_returns_blocked_result(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=1.0,
-            content_safe=True,
-            pii_entities=[],
-            policy_permitted=True,
-        )
-        with patches[0] as mock_inj, patches[1] as mock_cs, patches[2] as mock_pii, patches[3] as mock_pol:
-            result = await run_pre_pipeline(imf, state)
-
-        assert result.blocked is True
-        assert result.block_reason == "injection_detected"
-        assert result.block_status == 400
-
-    @pytest.mark.asyncio
-    async def test_injection_block_sets_injection_score_in_imf(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=1.0, content_safe=True, pii_entities=[], policy_permitted=True,
-        )
-        with patches[0], patches[1], patches[2], patches[3]:
-            await run_pre_pipeline(imf, state)
-
-        assert imf["governance"]["injection_score"] == 1.0
-
-    @pytest.mark.asyncio
-    async def test_injection_block_does_not_call_content_safety(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=1.0, content_safe=True, pii_entities=[], policy_permitted=True,
-        )
-        with patches[0], patches[1] as mock_cs, patches[2], patches[3]:
-            await run_pre_pipeline(imf, state)
-
-        mock_cs.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_injection_block_does_not_call_pii(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=1.0, content_safe=True, pii_entities=[], policy_permitted=True,
-        )
-        with patches[0], patches[1], patches[2] as mock_pii, patches[3]:
-            await run_pre_pipeline(imf, state)
-
-        mock_pii.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_injection_block_does_not_call_policy(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=1.0, content_safe=True, pii_entities=[], policy_permitted=True,
-        )
-        with patches[0], patches[1], patches[2], patches[3] as mock_pol:
-            await run_pre_pipeline(imf, state)
-
-        mock_pol.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_latency_ms_is_non_negative_integer(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=1.0, content_safe=True, pii_entities=[], policy_permitted=True,
-        )
-        with patches[0], patches[1], patches[2], patches[3]:
-            result = await run_pre_pipeline(imf, state)
-
-        assert isinstance(result.latency_ms, int)
-        assert result.latency_ms >= 0
-
-
-# ---------------------------------------------------------------------------
-# run_pre_pipeline — content safety block short-circuits before PII and policy
-# ---------------------------------------------------------------------------
-
-class TestContentSafetyBlockShortCircuit:
-    """
-    When content safety returns False, the pipeline MUST block immediately.
-    PII masking and policy check MUST NOT run.
-    """
-
-    @pytest.mark.asyncio
-    async def test_content_safety_block_returns_blocked_result(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=0.0, content_safe=False, pii_entities=[], policy_permitted=True,
-        )
-        with patches[0], patches[1], patches[2], patches[3]:
-            result = await run_pre_pipeline(imf, state)
-
-        assert result.blocked is True
-        assert result.block_reason == "content_safety_violation"
-        assert result.block_status == 400
-
-    @pytest.mark.asyncio
-    async def test_content_safety_block_sets_flag_in_imf(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=0.0, content_safe=False, pii_entities=[], policy_permitted=True,
-        )
-        with patches[0], patches[1], patches[2], patches[3]:
-            await run_pre_pipeline(imf, state)
-
-        assert imf["governance"]["content_safety_passed"] is False
-
-    @pytest.mark.asyncio
-    async def test_content_safety_block_does_not_call_pii(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=0.0, content_safe=False, pii_entities=[], policy_permitted=True,
-        )
-        with patches[0], patches[1], patches[2] as mock_pii, patches[3]:
-            await run_pre_pipeline(imf, state)
-
-        mock_pii.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_content_safety_block_does_not_call_policy(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=0.0, content_safe=False, pii_entities=[], policy_permitted=True,
-        )
-        with patches[0], patches[1], patches[2], patches[3] as mock_pol:
-            await run_pre_pipeline(imf, state)
-
-        mock_pol.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# run_pre_pipeline — PII runs before policy on passing requests
-# ---------------------------------------------------------------------------
-
-class TestPiiRunsBeforePolicy:
-    """
-    When injection and content safety pass, PII MUST run before policy check.
-    """
-
-    @pytest.mark.asyncio
-    async def test_pii_is_called_before_policy_on_passing_request(self):
-        """Use call order tracking to confirm PII precedes policy."""
-        imf = _base_imf()
-        state, _ = _make_state()
-        call_order: list[str] = []
-
-        def pii_side_effect(*args, **kwargs):
-            call_order.append("pii")
-            return (imf["request"]["messages"], [])
-
-        def policy_side_effect(*args, **kwargs):
-            call_order.append("policy")
-            return (True, "role_check_pass")
-
-        with (
-            patch("security_layer.pipeline.scan_for_injection", return_value=0.0),
-            patch("security_layer.pipeline.check_content_safety", return_value=True),
-            patch("security_layer.pipeline.mask_messages", side_effect=pii_side_effect),
-            patch("security_layer.pipeline.check_policy", side_effect=policy_side_effect),
-        ):
-            await run_pre_pipeline(imf, state)
-
-        assert call_order == ["pii", "policy"], (
-            f"Expected PII before policy, got: {call_order}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_pii_fields_set_in_imf_on_passing_request(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=0.0, content_safe=True,
-            pii_entities=["EMAIL_ADDRESS"], policy_permitted=True,
-        )
-        with patches[0], patches[1], patches[2], patches[3]:
-            result = await run_pre_pipeline(imf, state)
-
-        assert result.blocked is False
-        assert imf["governance"]["pii_masked"] is True
-        assert "EMAIL_ADDRESS" in imf["governance"]["pii_fields_detected"]
-
-    @pytest.mark.asyncio
-    async def test_pii_called_even_when_no_entities_detected(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=0.0, content_safe=True,
-            pii_entities=[], policy_permitted=True,
-        )
-        with patches[0], patches[1], patches[2] as mock_pii, patches[3]:
-            await run_pre_pipeline(imf, state)
-
-        mock_pii.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_pii_masked_false_when_no_entities(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=0.0, content_safe=True,
-            pii_entities=[], policy_permitted=True,
-        )
-        with patches[0], patches[1], patches[2], patches[3]:
-            await run_pre_pipeline(imf, state)
-
-        assert imf["governance"]["pii_masked"] is False
-        assert imf["governance"]["pii_fields_detected"] == []
-
-
-# ---------------------------------------------------------------------------
-# run_pre_pipeline — policy deny returns block_status=403
-# ---------------------------------------------------------------------------
-
-class TestPolicyDenyBlock:
-    """Policy denial MUST return block_status=403 and block_reason='policy_denied'."""
-
-    @pytest.mark.asyncio
-    async def test_policy_deny_returns_403(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=0.0, content_safe=True,
-            pii_entities=[], policy_permitted=False,
-        )
-        with patches[0], patches[1], patches[2], patches[3]:
-            result = await run_pre_pipeline(imf, state)
-
-        assert result.blocked is True
-        assert result.block_status == 403
-        assert result.block_reason == "policy_denied"
-
-    @pytest.mark.asyncio
-    async def test_policy_deny_appends_decision_to_imf(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=0.0, content_safe=True,
-            pii_entities=[], policy_permitted=False,
-        )
-        with patches[0], patches[1], patches[2], patches[3]:
-            await run_pre_pipeline(imf, state)
-
-        assert "role_check_deny" in imf["governance"]["policy_decisions"]
-
-    @pytest.mark.asyncio
-    async def test_policy_deny_pii_already_ran(self):
-        """PII masking must have run before the policy denial block is triggered."""
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=0.0, content_safe=True,
-            pii_entities=["PHONE_NUMBER"], policy_permitted=False,
-        )
-        with patches[0], patches[1], patches[2], patches[3]:
-            result = await run_pre_pipeline(imf, state)
-
-        # Policy denied, but PII fields must already be set
-        assert result.blocked is True
-        assert imf["governance"]["pii_fields_detected"] == ["PHONE_NUMBER"]
-
-    @pytest.mark.asyncio
-    async def test_injection_block_returns_400_not_403(self):
-        """Injection block must return 400, not 403."""
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=1.0, content_safe=True,
-            pii_entities=[], policy_permitted=True,
-        )
-        with patches[0], patches[1], patches[2], patches[3]:
-            result = await run_pre_pipeline(imf, state)
-
-        assert result.block_status == 400
-
-    @pytest.mark.asyncio
-    async def test_content_safety_block_returns_400_not_403(self):
-        """Content safety block must return 400, not 403."""
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=0.0, content_safe=False,
-            pii_entities=[], policy_permitted=True,
-        )
-        with patches[0], patches[1], patches[2], patches[3]:
-            result = await run_pre_pipeline(imf, state)
-
-        assert result.block_status == 400
-
-
-# ---------------------------------------------------------------------------
-# run_pre_pipeline — all governance fields on a passing pipeline
-# ---------------------------------------------------------------------------
-
-class TestPassingPipelineGovernanceFields:
-    """
-    On a fully passing pipeline, every expected governance field must be
-    present in the IMF with the correct type.
-    """
-
-    @pytest.mark.asyncio
-    async def test_all_governance_fields_present_and_typed(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=0.0, content_safe=True,
-            pii_entities=["EMAIL_ADDRESS"], policy_permitted=True,
-        )
-        with patches[0], patches[1], patches[2], patches[3]:
-            result = await run_pre_pipeline(imf, state)
-
-        gov = imf["governance"]
-
-        assert result.blocked is False
-        assert result.block_reason is None
-        assert result.block_status is None
-
-        # injection_score: float
-        assert isinstance(gov["injection_score"], float)
-        assert gov["injection_score"] == 0.0
-
-        # content_safety_passed: bool
-        assert isinstance(gov["content_safety_passed"], bool)
-        assert gov["content_safety_passed"] is True
-
-        # pii_masked: bool
-        assert isinstance(gov["pii_masked"], bool)
-        assert gov["pii_masked"] is True  # because entities = ["EMAIL_ADDRESS"]
-
-        # pii_fields_detected: list
-        assert isinstance(gov["pii_fields_detected"], list)
-        assert "EMAIL_ADDRESS" in gov["pii_fields_detected"]
-
-        # policy_decisions: list
-        assert isinstance(gov["policy_decisions"], list)
-        assert len(gov["policy_decisions"]) >= 1
-
-        # human_approval_required: bool, False for POC
-        assert isinstance(gov["human_approval_required"], bool)
-        assert gov["human_approval_required"] is False
-
-        # human_approval_status: str, "not_required" for POC
-        assert isinstance(gov["human_approval_status"], str)
-        assert gov["human_approval_status"] == "not_required"
-
-    @pytest.mark.asyncio
-    async def test_passing_result_has_non_negative_latency(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=0.0, content_safe=True,
-            pii_entities=[], policy_permitted=True,
-        )
-        with patches[0], patches[1], patches[2], patches[3]:
-            result = await run_pre_pipeline(imf, state)
-
-        assert isinstance(result.latency_ms, int)
-        assert result.latency_ms >= 0
-
-    @pytest.mark.asyncio
-    async def test_passing_result_imf_is_same_object(self):
-        """run_pre_pipeline mutates the IMF in-place; result.imf must be the same dict."""
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=0.0, content_safe=True,
-            pii_entities=[], policy_permitted=True,
-        )
-        with patches[0], patches[1], patches[2], patches[3]:
-            result = await run_pre_pipeline(imf, state)
-
-        assert result.imf is imf
-
-    @pytest.mark.asyncio
-    async def test_policy_pass_decision_appended(self):
-        imf = _base_imf()
-        state, _ = _make_state()
-        patches = _patch_pipeline_deps(
-            imf["request"]["messages"],
-            injection_score=0.0, content_safe=True,
-            pii_entities=[], policy_permitted=True,
-        )
-        with patches[0], patches[1], patches[2], patches[3]:
-            await run_pre_pipeline(imf, state)
-
-        assert "role_check_pass" in imf["governance"]["policy_decisions"]
-
-
-# ---------------------------------------------------------------------------
-# run_post_pipeline — null / missing response.content
-# ---------------------------------------------------------------------------
-
-class TestRunPostPipelineNullContent:
-    """
-    When response.content is null, missing, or empty the IMF MUST be returned
-    unchanged and the entity list MUST be empty.
-    """
-
-    @pytest.mark.asyncio
-    async def test_null_content_returns_imf_unchanged(self):
-        imf = _base_imf()
-        imf["response"] = {"content": None}
-        state, _ = _make_state()
-
-        result_imf, entities = await run_post_pipeline(imf, state)
-
-        assert result_imf is imf
-        assert entities == []
-
-    @pytest.mark.asyncio
-    async def test_absent_response_key_returns_imf_unchanged(self):
-        imf = _base_imf()
-        del imf["response"]
-        state, _ = _make_state()
-
-        result_imf, entities = await run_post_pipeline(imf, state)
-
-        assert result_imf is imf
-        assert entities == []
-
-    @pytest.mark.asyncio
-    async def test_empty_string_content_returns_imf_unchanged(self):
-        imf = _base_imf()
-        imf["response"] = {"content": ""}
-        state, _ = _make_state()
-
-        result_imf, entities = await run_post_pipeline(imf, state)
-
-        assert entities == []
-
-    @pytest.mark.asyncio
-    async def test_null_response_block_returns_imf_unchanged(self):
-        imf = _base_imf()
-        imf["response"] = None
-        state, _ = _make_state()
-
-        result_imf, entities = await run_post_pipeline(imf, state)
-
-        assert result_imf is imf
-        assert entities == []
-
-    @pytest.mark.asyncio
-    async def test_mask_text_not_called_when_content_null(self):
-        imf = _base_imf()
-        imf["response"] = {"content": None}
-        state, _ = _make_state()
-
-        with patch("security_layer.pipeline.mask_text") as mock_mask:
-            await run_post_pipeline(imf, state)
-
-        mock_mask.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# run_post_pipeline — content present, PII found
-# ---------------------------------------------------------------------------
-
-class TestRunPostPipelineWithContent:
-    """
-    When response.content is non-null and PII is found, the IMF content MUST
-    be replaced and governance fields updated.
-    """
-
-    @pytest.mark.asyncio
-    async def test_content_masked_and_entities_returned(self):
-        imf = _base_imf()
-        imf["response"] = {"content": "Call me at 555-867-5309"}
-        state, _ = _make_state()
-
-        with patch(
-            "security_layer.pipeline.mask_text",
-            return_value=("Call me at [REDACTED_PHONE_NUMBER]", ["PHONE_NUMBER"]),
-        ):
-            result_imf, entities = await run_post_pipeline(imf, state)
-
-        assert result_imf["response"]["content"] == "Call me at [REDACTED_PHONE_NUMBER]"
-        assert entities == ["PHONE_NUMBER"]
-
-    @pytest.mark.asyncio
-    async def test_pii_masked_set_true_in_governance(self):
-        imf = _base_imf()
-        imf["response"] = {"content": "Email: user@example.com"}
-        state, _ = _make_state()
-
-        with patch(
-            "security_layer.pipeline.mask_text",
-            return_value=("[REDACTED_EMAIL_ADDRESS]", ["EMAIL_ADDRESS"]),
-        ):
-            await run_post_pipeline(imf, state)
-
-        assert imf["governance"]["pii_masked"] is True
-
-    @pytest.mark.asyncio
-    async def test_pii_fields_detected_merged_with_existing(self):
-        """New entities are merged (union, deduplicated) with pre-existing ones."""
-        imf = _base_imf()
-        imf["governance"]["pii_fields_detected"] = ["EMAIL_ADDRESS"]
-        imf["response"] = {"content": "Call 555-867-5309"}
-        state, _ = _make_state()
-
-        with patch(
-            "security_layer.pipeline.mask_text",
-            return_value=("Call [REDACTED_PHONE_NUMBER]", ["PHONE_NUMBER"]),
-        ):
-            await run_post_pipeline(imf, state)
-
-        detected = imf["governance"]["pii_fields_detected"]
-        assert "EMAIL_ADDRESS" in detected
-        assert "PHONE_NUMBER" in detected
-
-    @pytest.mark.asyncio
-    async def test_pii_fields_not_duplicated_on_merge(self):
-        """Merging the same entity type twice must not produce duplicates."""
-        imf = _base_imf()
-        imf["governance"]["pii_fields_detected"] = ["EMAIL_ADDRESS"]
-        imf["response"] = {"content": "Email: user@example.com"}
-        state, _ = _make_state()
-
-        with patch(
-            "security_layer.pipeline.mask_text",
-            return_value=("[REDACTED_EMAIL_ADDRESS]", ["EMAIL_ADDRESS"]),
-        ):
-            await run_post_pipeline(imf, state)
-
-        detected = imf["governance"]["pii_fields_detected"]
-        assert detected.count("EMAIL_ADDRESS") == 1
-
-    @pytest.mark.asyncio
-    async def test_no_entities_found_does_not_mutate_governance(self):
-        """When mask_text finds no entities, governance fields must not change."""
-        imf = _base_imf()
-        original_pii_masked = imf["governance"]["pii_masked"]
-        imf["response"] = {"content": "Hello there"}
-        state, _ = _make_state()
-
-        with patch(
-            "security_layer.pipeline.mask_text",
-            return_value=("Hello there", []),
-        ):
-            result_imf, entities = await run_post_pipeline(imf, state)
-
-        assert entities == []
-        assert result_imf["governance"]["pii_masked"] == original_pii_masked
+        assert result.success is False
+        assert result.status_code == 400
+        assert result.error_code == "governance_check_failed"

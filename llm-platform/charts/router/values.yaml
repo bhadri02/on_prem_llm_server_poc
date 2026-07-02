@@ -1,0 +1,61 @@
+# Default values for the Intelligent Router Helm chart (POC).
+# All production-deferred features (HPA, Vault, NetworkPolicy, mTLS) are
+# disabled. Override AUDIT_STORE_URL at deploy time via --set or a Secret.
+
+replicaCount: 1
+
+image:
+  repository: registry.local/router
+  tag: ""
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8082
+
+# Environment variables passed to the router container.
+# The three required vars (MODEL_MATRIX_PATH, TASK_RULES_PATH, AUDIT_STORE_URL)
+# must be set; AUDIT_STORE_URL has no safe default and is left empty here so
+# the lifespan validation catches a misconfigured deployment immediately.
+env:
+  # Required — router refuses to start if absent or empty
+  MODEL_MATRIX_PATH: "/config/model_matrix.yaml"
+  TASK_RULES_PATH: "/config/task_classifier_rules.yaml"
+  AUDIT_STORE_URL: ""   # override with --set env.AUDIT_STORE_URL=http://audit-store:9200
+
+  # Optional — defaults match pydantic-settings defaults in config.py
+  CACHE_URL: "http://cache:8086"
+  INFERENCE_ADAPTER_URL: "http://inference-adapter:8087"
+  LOG_LEVEL: "INFO"
+  INFERENCE_TIMEOUT_SECONDS: "120"
+  HEALTH_CHECK_TIMEOUT_SECONDS: "5"
+
+resources:
+  requests:
+    cpu: "200m"
+    memory: "256Mi"
+  limits:
+    cpu: "1"
+    memory: "1Gi"
+
+observability:
+  metrics:
+    enabled: true
+    port: 9090
+  tracing:
+    enabled: false
+    endpoint: "http://otel-collector:4317"
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+vault:
+  enabled: false
+  role: "router-role"
+  secretPath: "secret/llm-platform/router"
+
+networkPolicy:
+  enabled: false

@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "router.fullname" . }}
+  labels:
+    {{- include "router.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "router.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
