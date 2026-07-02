@@ -1,3 +1,6 @@
+# Default values for admin-portal.
+# POC scope: replicaCount 1, autoscaling disabled, vault disabled.
+
 replicaCount: 1
 
 image:
@@ -8,22 +11,23 @@ image:
 service:
   type: ClusterIP
   port: 8084
+  metricsPort: 9090
 
-metricsPort: 9090
-
-secretRef:
-  name: "llm-poc-secrets"
-
-serviceAccount:
-  name: "llm-platform"
+ingress:
+  enabled: true
+  className: nginx
+  host: llm-portal.local
+  path: /
+  pathType: Prefix
+  annotations: {}
 
 resources:
   requests:
     cpu: "100m"
     memory: "256Mi"
   limits:
-    cpu: "1"
-    memory: "1Gi"
+    cpu: "500m"
+    memory: "512Mi"
 
 autoscaling:
   enabled: false
@@ -31,32 +35,20 @@ autoscaling:
 vault:
   enabled: false
 
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 8084
-  initialDelaySeconds: 15
-  periodSeconds: 15
-  timeoutSeconds: 5
-  failureThreshold: 3
-  successThreshold: 1
+# Environment variables injected into the container.
+# GATEWAY_API_KEY is stored in a Kubernetes Secret (see templates/secret.yaml)
+# and mounted via secretKeyRef — it is NOT in plain env here.
+env:
+  API_GATEWAY_URL: "http://api-gateway:8080"
+  AUDIT_STORE_URL: "http://audit-store:9200"
+  MODEL_REGISTRY_URL: "http://model-registry:5000"
+  GRAFANA_URL: "http://grafana:3000"
+  GATEWAY_API_KEY: "poc-secret-key"
+  LOG_LEVEL: "INFO"
 
-readinessProbe:
-  httpGet:
-    path: /health
-    port: 8084
-  initialDelaySeconds: 15
-  periodSeconds: 15
-  timeoutSeconds: 5
-  failureThreshold: 3
-  successThreshold: 1
+serviceAccount:
+  # Set to "" to skip service account binding and use the default SA.
+  name: ""
 
-ingress:
-  enabled: false
-  host: "llm-portal.local"
-  servicePort: 8084
-
-env: {}
-
-persistence:
-  enabled: false
+nameOverride: ""
+fullnameOverride: ""

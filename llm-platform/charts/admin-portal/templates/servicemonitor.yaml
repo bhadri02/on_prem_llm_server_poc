@@ -5,12 +5,12 @@ metadata:
   labels:
     {{- include "admin-portal.labels" . | nindent 4 }}
 spec:
-  selector:
-    matchLabels:
-      {{- include "admin-portal.selectorLabels" . | nindent 6 }}
   namespaceSelector:
     matchNames:
       - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "admin-portal.selectorLabels" . | nindent 6 }}
   endpoints:
     - port: metrics
       path: /metrics
