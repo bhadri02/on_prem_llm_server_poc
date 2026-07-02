@@ -1,0 +1,17 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "admin-portal.fullname" . }}
+  labels:
+    {{- include "admin-portal.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "admin-portal.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s

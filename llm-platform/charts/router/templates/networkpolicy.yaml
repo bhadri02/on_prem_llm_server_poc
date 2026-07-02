@@ -1,4 +1,3 @@
-{{- if .Values.networkPolicy.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -13,37 +12,17 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Allow API traffic (port 8082) from the Security Layer only
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: security-layer
-      ports:
-        - protocol: TCP
-          port: 8082
-    # Allow metrics scraping (port 9090) from the monitoring namespace only
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: monitoring
-      ports:
-        - protocol: TCP
-          port: 9090
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
   egress:
-    # Allow outbound to the Cache Layer (port 8086)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
     - ports:
-        - protocol: TCP
-          port: 8086
-    # Allow outbound to the Inference Adapter (port 8087)
-    - ports:
-        - protocol: TCP
-          port: 8087
-    # Allow outbound to the Audit Store (port 9200)
-    - ports:
-        - protocol: TCP
-          port: 9200
-    # Allow DNS resolution
-    - ports:
-        - protocol: UDP
-          port: 53
-{{- end }}
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

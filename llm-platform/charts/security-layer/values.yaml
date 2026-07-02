@@ -9,37 +9,59 @@ service:
   type: ClusterIP
   port: 8081
 
-env:
-  LOG_LEVEL: "INFO"
-  DOWNSTREAM_ROUTER_URL: "http://router:8082"
-  PII_ENABLED: "true"
-  INJECTION_PATTERNS_PATH: "/config/injection_patterns.yaml"
-  # AUDIT_STORE_URL and AUDIT_API_KEY must be supplied at deploy time
-  # via --set or a Kubernetes Secret named security-layer-secrets
+metricsPort: 9090
 
 resources:
   requests:
-    cpu: "200m"
-    memory: "512Mi"
+    cpu: "100m"
+    memory: "256Mi"
   limits:
     cpu: "1"
     memory: "1Gi"
 
-observability:
-  metrics:
-    enabled: true
-    port: 9090
-  tracing:
-    enabled: false
-    endpoint: "http://otel-collector:4317"
-
 autoscaling:
   enabled: false
-  minReplicas: 2
-  maxReplicas: 10
-  targetCPUUtilizationPercentage: 70
 
 vault:
   enabled: false
-  role: "security-layer-role"
-  secretPath: "secret/llm-platform/security-layer"
+
+secretRef:
+  name: "llm-poc-secrets"
+
+serviceAccount:
+  name: "llm-platform"
+
+# initialDelaySeconds: 60 to accommodate spaCy model load time at container startup
+# Requirement 11.4
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8081
+  initialDelaySeconds: 60
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 1
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8081
+  initialDelaySeconds: 60
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 1
+
+env: {}
+
+persistence:
+  enabled: false
+  size: ""
+  storageClass: ""
+  mountPath: "/data"
+
+ingress:
+  enabled: false
+  host: ""
+  servicePort: 8081

@@ -1,0 +1,48 @@
+# Umbrella chart defaults — inherited by sub-charts when not overridden
+replicaCount: 1
+
+image:
+  pullPolicy: IfNotPresent
+
+autoscaling:
+  enabled: false
+
+vault:
+  enabled: false
+
+secretRef:
+  name: "llm-poc-secrets"
+
+serviceAccount:
+  name: "llm-platform"
+
+# All sub-charts disabled by default — opt-in via values-poc.yaml
+apiGateway:
+  enabled: false
+
+securityLayer:
+  enabled: false
+
+router:
+  enabled: false
+
+cache:
+  enabled: false
+
+inferenceOllama:
+  enabled: false
+
+agentFramework:
+  enabled: false
+
+modelRegistry:
+  enabled: false
+
+auditStore:
+  enabled: false
+
+adminPortal:
+  enabled: false
+
+observability:
+  enabled: false

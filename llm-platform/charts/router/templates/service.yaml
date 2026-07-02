@@ -5,15 +5,15 @@ metadata:
   labels:
     {{- include "router.labels" . | nindent 4 }}
 spec:
-  type: ClusterIP
-  selector:
-    {{- include "router.selectorLabels" . | nindent 4 }}
+  type: {{ .Values.service.type }}
   ports:
     - name: http
-      port: 8082
-      targetPort: 8082
+      port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.port }}
       protocol: TCP
     - name: metrics
-      port: 9090
-      targetPort: 9090
+      port: {{ .Values.metricsPort }}
+      targetPort: {{ .Values.metricsPort }}
       protocol: TCP
+  selector:
+    {{- include "router.selectorLabels" . | nindent 4 }}
