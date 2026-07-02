@@ -1,6 +1,6 @@
 """
-Shared pytest fixtures for the Model Registry and Security & Governance Layer
-test suites.
+Shared pytest fixtures for the Model Registry, Security & Governance Layer,
+and Intelligent Router test suites.
 
 Model Registry fixtures:
   - settings_override: patches STORAGE_PATH and REGISTRY_API_KEY env vars
@@ -16,6 +16,14 @@ Security & Governance Layer fixtures:
     counters/histograms between tests.
   - mock_router_response: factory fixture for constructing mock router
     responses; companion to patching forward_to_router.
+
+Intelligent Router fixtures:
+  - router_test_app: FastAPI app with mock lifespan pre-loaded with
+    ClassifierRules, ModelMatrix, and a mock httpx.AsyncClient.
+  - router_async_client: httpx.AsyncClient wired to router_test_app via
+    ASGITransport (no real network required).
+  - reset_router_prometheus_registry: autouse fixture that resets router
+    metric counters between tests to prevent counter bleed.
 """
 
 import re
@@ -30,6 +38,71 @@ from model_registry.main import app, lifespan
 
 # anyio backend registration (required by pytest-anyio / anyio pytest plugin)
 pytest_plugins = ("anyio",)
+
+# ===========================================================================
+# Intelligent Router test helpers (shared across property tests)
+# ===========================================================================
+
+def _make_router_test_state():
+    """Build a minimal app.state for router unit/property tests.
+
+    Returns a SimpleNamespace with:
+      - classifier_rules: ClassifierRules loaded from task_classifier_rules.yaml
+      - model_matrix:     ModelMatrix with a single model 'test-model'
+      - http_client:      MagicMock (async-compatible)
+      - settings:         MagicMock with required url/timeout attributes
+    """
+    import types
+    from intelligent_router.task_classifier import ClassifierRules
+    from intelligent_router.model_selector import ModelMatrix, ModelEntry
+
+    # Build a minimal ClassifierRules with representative keywords
+    rules = ClassifierRules(
+        rules={
+            "code": ["code", "function", "python", "javascript", "debug", "implement"],
+            "reasoning": ["reason", "analyze", "logic", "deduce", "evaluate"],
+            "summarization": ["summarize", "summary", "tldr", "brief", "condense"],
+            "translation": ["translate", "translation", "in french", "in spanish"],
+        },
+        default="chat",
+    )
+
+    # Build a minimal ModelMatrix with one model
+    model_entry = ModelEntry(
+        name="test-model",
+        backend="ollama",
+        endpoint="http://inference-ollama:11434",
+        tasks=["chat", "code", "reasoning", "summarization", "translation"],
+        health_url="http://inference-ollama:11434/api/tags",
+        fallback=None,
+    )
+    matrix = ModelMatrix(
+        models={"test-model": model_entry},
+        task_defaults={
+            "chat": "test-model",
+            "code": "test-model",
+            "reasoning": "test-model",
+            "summarization": "test-model",
+            "translation": "test-model",
+        },
+    )
+
+    mock_settings = MagicMock()
+    mock_settings.cache_url = "http://cache:8086"
+    mock_settings.inference_adapter_url = "http://inference-adapter:8087"
+    mock_settings.audit_store_url = "http://audit-store:9200"
+    mock_settings.inference_timeout_seconds = 120
+    mock_settings.health_check_timeout_seconds = 5
+
+    mock_http_client = MagicMock()
+
+    state = types.SimpleNamespace(
+        classifier_rules=rules,
+        model_matrix=matrix,
+        http_client=mock_http_client,
+        settings=mock_settings,
+    )
+    return state
 
 # Fixed API key used across all tests that exercise auth
 TEST_KEY = "test-secret-key"
@@ -220,3 +293,72 @@ def mock_router_response():
         )
 
     return _factory
+
+
+# ===========================================================================
+# Intelligent Router fixtures (Task 22.1)
+# ===========================================================================
+
+
+@pytest.fixture
+async def router_test_app():
+    """FastAPI app for the Intelligent Router with a mock lifespan.
+
+    Bypasses the real lifespan (which calls sys.exit when env vars are
+    missing). Instead, directly populates app.state with ClassifierRules,
+    ModelMatrix, and mock HTTP client.
+    """
+    from intelligent_router.main import create_app as _create_router_app
+
+    @asynccontextmanager
+    async def _mock_router_lifespan(application):
+        application.state = _make_router_test_state()
+        yield
+
+    _router_app = _create_router_app()
+    _router_app.router.lifespan_context = _mock_router_lifespan
+
+    yield _router_app
+
+
+@pytest.fixture
+async def router_async_client(router_test_app):
+    """Async httpx client wired to router_test_app via ASGITransport."""
+    async with AsyncClient(
+        transport=ASGITransport(app=router_test_app),
+        base_url="http://test",
+    ) as client:
+        yield client
+
+
+@pytest.fixture(autouse=True, scope="function")
+def reset_router_prometheus_registry():
+    """Reset Intelligent Router Prometheus metric counters between tests.
+
+    Clears the internal ``_metrics`` dict on each Counter and Histogram so
+    that label-combination child objects from one test do not bleed into the
+    next.
+    """
+    import intelligent_router.metrics as ir_metrics
+
+    _metric_objects = [
+        ir_metrics.requests_total,
+        ir_metrics.latency,
+        ir_metrics.cache_hits_total,
+        ir_metrics.fallbacks_total,
+        ir_metrics.errors_total,
+    ]
+
+    for metric in _metric_objects:
+        try:
+            metric._metrics.clear()
+        except AttributeError:
+            pass
+
+    yield
+
+    for metric in _metric_objects:
+        try:
+            metric._metrics.clear()
+        except AttributeError:
+            pass

@@ -1,42 +1,46 @@
-# Version control
+# ── Version control ───────────────────────────────────────────────────────────
 .git
 .gitignore
 
-# Python bytecode
+# ── Python bytecode ───────────────────────────────────────────────────────────
 __pycache__
 **/__pycache__
 *.pyc
 *.pyo
 *.pyd
 
-# Tests (not needed in the container image)
+# ── Tests (not needed in container images) ────────────────────────────────────
 tests/
 
-# Kiro spec/steering files
+# ── Kiro spec/steering files ──────────────────────────────────────────────────
 .kiro/
 
-# Python packaging artifacts
+# ── Python packaging artifacts ────────────────────────────────────────────────
 *.egg-info
 *.dist-info
 
-# Virtual environments
+# ── Virtual environments ──────────────────────────────────────────────────────
 .venv
 venv
 env
 
-# Hypothesis test database
+# ── Test / property-test databases ───────────────────────────────────────────
 .hypothesis/
 .pytest_cache/
 
-# Documentation / local-only files
+# ── Documentation / local-only files ─────────────────────────────────────────
 *.md
 LOCAL_DEMO_SETUP.md
 POC_to_Production_Gap_Analysis.md
 LAYER_WISE_IMPLEMENTATION.md
 enterprise_onprem_LLM_platform_framework.md
 
-# Other service packages (only security_layer/ is needed for this image)
-audit_store/
-model_registry/
-seed/
+# ── Helm / Kubernetes manifests ───────────────────────────────────────────────
 llm-platform/
+seed/
+
+# ── OS / editor artefacts ─────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
