@@ -121,9 +121,18 @@ def test_empty_blocklist_returns_true(caplog):
 
 
 def test_empty_blocklist_logs_warning(caplog):
-    messages = _make_messages("some content")
-    with caplog.at_level(logging.WARNING):
-        check_content_safety(messages, [])
+    # The JSON logger uses propagate=False; temporarily enable propagation
+    # so caplog can capture the WARNING record.
+    import logging as _logging
+    _logger = _logging.getLogger("security_layer.content_safety")
+    _orig_propagate = _logger.propagate
+    _logger.propagate = True
+    try:
+        messages = _make_messages("some content")
+        with caplog.at_level(logging.WARNING, logger="security_layer.content_safety"):
+            check_content_safety(messages, [])
+    finally:
+        _logger.propagate = _orig_propagate
     assert any("empty" in record.message.lower() for record in caplog.records)
 
 

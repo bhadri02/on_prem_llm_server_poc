@@ -525,3 +525,261 @@ class TestResponseBlockOptionalContent:
     def test_content_with_value_is_valid(self):
         rb = ResponseBlock(content="Hello world")
         assert rb.content == "Hello world"
+
+
+# ===========================================================================
+# Intelligent Router model tests (intelligent_router/models.py)
+# ===========================================================================
+
+from intelligent_router.models import (
+    GovernanceBlock as IRGovernanceBlock,
+    IMFRequest as IRIMFRequest,
+    Message as IRMessage,
+    OpenAIChatRequest,
+    UUID4_RE as IR_UUID4_RE,
+)
+
+IR_VALID_UUID = "550e8400-e29b-41d4-a716-446655440000"
+
+MINIMAL_IR_USER = {
+    "user_id": "test-user",
+    "department": "engineering",
+    "roles": ["developer"],
+    "auth_method": "api_key",
+}
+
+MINIMAL_IR_REQUEST = {
+    "messages": [{"role": "user", "content": "Hello"}],
+}
+
+
+def make_ir_imf(**overrides) -> dict:
+    data = {
+        "request_id": IR_VALID_UUID,
+        "user": MINIMAL_IR_USER,
+        "request": MINIMAL_IR_REQUEST,
+    }
+    data.update(overrides)
+    return data
+
+
+# ---------------------------------------------------------------------------
+# 4.1  UUID4_RE regex (intelligent_router)
+# ---------------------------------------------------------------------------
+
+class TestIRUUID4Regex:
+    def test_valid_uuid4_matches(self):
+        assert IR_UUID4_RE.match("550e8400-e29b-41d4-a716-446655440000")
+
+    def test_valid_uuid4_uppercase_matches(self):
+        assert IR_UUID4_RE.match("550E8400-E29B-41D4-A716-446655440000")
+
+    def test_version_nibble_must_be_4(self):
+        # version nibble is '1', not '4'
+        assert not IR_UUID4_RE.match("550e8400-e29b-11d4-a716-446655440000")
+
+    def test_random_string_does_not_match(self):
+        assert not IR_UUID4_RE.match("not-a-uuid")
+
+    def test_empty_string_does_not_match(self):
+        assert not IR_UUID4_RE.match("")
+
+    def test_missing_hyphens_does_not_match(self):
+        assert not IR_UUID4_RE.match("550e8400e29b41d4a716446655440000")
+
+
+# ---------------------------------------------------------------------------
+# 4.3  IMFRequest — request_id validator
+# ---------------------------------------------------------------------------
+
+class TestIRIMFRequestId:
+    def test_valid_uuid4_passes(self):
+        req = IRIMFRequest(**make_ir_imf())
+        assert req.request_id == IR_VALID_UUID
+
+    def test_non_uuid_string_raises_validation_error(self):
+        with pytest.raises(ValidationError) as exc_info:
+            IRIMFRequest(**make_ir_imf(request_id="not-a-uuid"))
+        errors = exc_info.value.errors()
+        assert any("request_id" in str(e["loc"]) for e in errors)
+        # The ValueError message must mention UUID-v4
+        assert any("UUID-v4" in str(e["msg"]) for e in errors)
+
+    def test_empty_request_id_raises_validation_error(self):
+        with pytest.raises(ValidationError) as exc_info:
+            IRIMFRequest(**make_ir_imf(request_id=""))
+        errors = exc_info.value.errors()
+        assert any("request_id" in str(e["loc"]) for e in errors)
+
+    def test_uuid_wrong_version_raises_validation_error(self):
+        bad = "550e8400-e29b-11d4-a716-446655440000"
+        with pytest.raises(ValidationError):
+            IRIMFRequest(**make_ir_imf(request_id=bad))
+
+    def test_uuid_invalid_variant_raises_validation_error(self):
+        # variant nibble '0' — not in [89ab]
+        bad = "550e8400-e29b-41d4-0716-446655440000"
+        with pytest.raises(ValidationError):
+            IRIMFRequest(**make_ir_imf(request_id=bad))
+
+
+# ---------------------------------------------------------------------------
+# 4.2  IMFRequest — request.messages validation
+# ---------------------------------------------------------------------------
+
+class TestIRIMFRequestMessages:
+    def test_absent_messages_raises_validation_error(self):
+        data = make_ir_imf(request={"task_type": "chat"})  # messages absent
+        with pytest.raises(ValidationError) as exc_info:
+            IRIMFRequest(**data)
+        errors = exc_info.value.errors()
+        assert any("messages" in str(e["loc"]) for e in errors)
+
+    def test_empty_messages_list_raises_validation_error(self):
+        data = make_ir_imf(request={"messages": []})
+        with pytest.raises(ValidationError) as exc_info:
+            IRIMFRequest(**data)
+        errors = exc_info.value.errors()
+        assert any("messages" in str(e["loc"]) for e in errors)
+
+    def test_one_message_is_valid(self):
+        req = IRIMFRequest(**make_ir_imf())
+        assert len(req.request.messages) == 1
+
+
+# ---------------------------------------------------------------------------
+# 4.3  IMFRequest — optional fields accept None
+# ---------------------------------------------------------------------------
+
+class TestIRIMFRequestOptionalFields:
+    def test_trace_id_none_is_valid(self):
+        req = IRIMFRequest(**make_ir_imf(trace_id=None))
+        assert req.trace_id is None
+
+    def test_span_id_none_is_valid(self):
+        req = IRIMFRequest(**make_ir_imf(span_id=None))
+        assert req.span_id is None
+
+    def test_timestamp_utc_none_is_valid(self):
+        req = IRIMFRequest(**make_ir_imf(timestamp_utc=None))
+        assert req.timestamp_utc is None
+
+    def test_request_model_none_is_valid(self):
+        data = make_ir_imf(request={**MINIMAL_IR_REQUEST, "model": None})
+        req = IRIMFRequest(**data)
+        assert req.request.model is None
+
+    def test_request_task_type_none_is_valid(self):
+        data = make_ir_imf(request={**MINIMAL_IR_REQUEST, "task_type": None})
+        req = IRIMFRequest(**data)
+        assert req.request.task_type is None
+
+    def test_request_max_tokens_none_is_valid(self):
+        data = make_ir_imf(request={**MINIMAL_IR_REQUEST, "max_tokens": None})
+        req = IRIMFRequest(**data)
+        assert req.request.max_tokens is None
+
+    def test_request_temperature_none_is_valid(self):
+        data = make_ir_imf(request={**MINIMAL_IR_REQUEST, "temperature": None})
+        req = IRIMFRequest(**data)
+        assert req.request.temperature is None
+
+
+# ---------------------------------------------------------------------------
+# 4.2  GovernanceBlock — all default values are correct
+# ---------------------------------------------------------------------------
+
+class TestIRGovernanceBlockDefaults:
+    def test_pii_masked_default(self):
+        assert IRGovernanceBlock().pii_masked is False
+
+    def test_pii_fields_detected_default(self):
+        assert IRGovernanceBlock().pii_fields_detected == []
+
+    def test_injection_score_default(self):
+        assert IRGovernanceBlock().injection_score == 0.0
+
+    def test_jailbreak_score_default(self):
+        assert IRGovernanceBlock().jailbreak_score == 0.0
+
+    def test_content_safety_passed_default(self):
+        assert IRGovernanceBlock().content_safety_passed is True
+
+    def test_human_approval_required_default(self):
+        assert IRGovernanceBlock().human_approval_required is False
+
+    def test_human_approval_status_default(self):
+        assert IRGovernanceBlock().human_approval_status == "not_required"
+
+    def test_policy_decisions_default(self):
+        assert IRGovernanceBlock().policy_decisions == []
+
+    def test_pii_fields_detected_instances_are_independent(self):
+        g1 = IRGovernanceBlock()
+        g2 = IRGovernanceBlock()
+        g1.pii_fields_detected.append("EMAIL")
+        assert g2.pii_fields_detected == []
+
+    def test_policy_decisions_instances_are_independent(self):
+        g1 = IRGovernanceBlock()
+        g2 = IRGovernanceBlock()
+        g1.policy_decisions.append({"policy": "deny"})
+        assert g2.policy_decisions == []
+
+
+# ---------------------------------------------------------------------------
+# 4.4  OpenAIChatRequest
+# ---------------------------------------------------------------------------
+
+class TestOpenAIChatRequest:
+    def test_valid_request_with_messages(self):
+        req = OpenAIChatRequest(messages=[{"role": "user", "content": "Hello"}])
+        assert len(req.messages) == 1
+
+    def test_model_none_is_valid(self):
+        req = OpenAIChatRequest(
+            messages=[{"role": "user", "content": "Hi"}],
+            model=None,
+        )
+        assert req.model is None
+
+    def test_model_absent_defaults_to_none(self):
+        req = OpenAIChatRequest(messages=[{"role": "user", "content": "Hi"}])
+        assert req.model is None
+
+    def test_empty_messages_raises_validation_error(self):
+        with pytest.raises(ValidationError) as exc_info:
+            OpenAIChatRequest(messages=[])
+        errors = exc_info.value.errors()
+        assert any("messages" in str(e["loc"]) for e in errors)
+
+    def test_stream_defaults_to_false(self):
+        req = OpenAIChatRequest(messages=[{"role": "user", "content": "Hi"}])
+        assert req.stream is False
+
+    def test_max_tokens_none_is_valid(self):
+        req = OpenAIChatRequest(
+            messages=[{"role": "user", "content": "Hi"}],
+            max_tokens=None,
+        )
+        assert req.max_tokens is None
+
+    def test_temperature_none_is_valid(self):
+        req = OpenAIChatRequest(
+            messages=[{"role": "user", "content": "Hi"}],
+            temperature=None,
+        )
+        assert req.temperature is None
+
+    def test_all_optional_fields_can_be_set(self):
+        req = OpenAIChatRequest(
+            messages=[{"role": "user", "content": "Hi"}],
+            model="llama3.2-3b",
+            max_tokens=512,
+            temperature=0.7,
+            stream=True,
+        )
+        assert req.model == "llama3.2-3b"
+        assert req.max_tokens == 512
+        assert req.temperature == 0.7
+        assert req.stream is True

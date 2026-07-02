@@ -52,8 +52,15 @@ class TestLoadInjectionPatterns:
 
     def test_file_not_found_returns_none(self, caplog):
         """Non-existent path → None and an ERROR log entry."""
-        with caplog.at_level(logging.ERROR, logger="security_layer.injection"):
-            result = load_injection_patterns("/nonexistent/path/patterns.yaml")
+        import logging as _logging
+        _logger = _logging.getLogger("security_layer.injection")
+        _orig_propagate = _logger.propagate
+        _logger.propagate = True
+        try:
+            with caplog.at_level(logging.ERROR, logger="security_layer.injection"):
+                result = load_injection_patterns("/nonexistent/path/patterns.yaml")
+        finally:
+            _logger.propagate = _orig_propagate
 
         assert result is None
         assert any(r.levelname == "ERROR" for r in caplog.records), (
@@ -62,9 +69,16 @@ class TestLoadInjectionPatterns:
 
     def test_malformed_yaml_returns_none(self, tmp_path, caplog):
         """Invalid YAML content → None and an ERROR log entry."""
+        import logging as _logging
         bad_yaml = _write_yaml(tmp_path, "patterns: [unclosed bracket")
-        with caplog.at_level(logging.ERROR, logger="security_layer.injection"):
-            result = load_injection_patterns(bad_yaml)
+        _logger = _logging.getLogger("security_layer.injection")
+        _orig_propagate = _logger.propagate
+        _logger.propagate = True
+        try:
+            with caplog.at_level(logging.ERROR, logger="security_layer.injection"):
+                result = load_injection_patterns(bad_yaml)
+        finally:
+            _logger.propagate = _orig_propagate
 
         assert result is None
         assert any(r.levelname == "ERROR" for r in caplog.records), (
@@ -73,14 +87,21 @@ class TestLoadInjectionPatterns:
 
     def test_invalid_regex_returns_none(self, tmp_path, caplog):
         """An entry that is not a valid regex → None and an ERROR log entry."""
+        import logging as _logging
         invalid_regex_yaml = textwrap.dedent("""\
             patterns:
               - "valid pattern"
               - "["
         """)
         bad_regex = _write_yaml(tmp_path, invalid_regex_yaml)
-        with caplog.at_level(logging.ERROR, logger="security_layer.injection"):
-            result = load_injection_patterns(bad_regex)
+        _logger = _logging.getLogger("security_layer.injection")
+        _orig_propagate = _logger.propagate
+        _logger.propagate = True
+        try:
+            with caplog.at_level(logging.ERROR, logger="security_layer.injection"):
+                result = load_injection_patterns(bad_regex)
+        finally:
+            _logger.propagate = _orig_propagate
 
         assert result is None
         assert any(r.levelname == "ERROR" for r in caplog.records), (
