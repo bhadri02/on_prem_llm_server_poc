@@ -14,29 +14,58 @@ spec:
       labels:
         {{- include "admin-portal.labels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{ .Values.serviceAccount.name | default "llm-platform" }}
+      serviceAccountName: {{ include "admin-portal.serviceAccountName" . }}
+      # POC security context — run as non-root UID 1000, no privilege escalation.
+      # hostNetwork, hostPID, and hostIPC are intentionally omitted (defaults to false).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
       containers:
         - name: admin-portal
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default "latest" }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: false
           ports:
             - name: http
-              containerPort: {{ .Values.service.port }}
+              containerPort: 8084
               protocol: TCP
             - name: metrics
-              containerPort: {{ .Values.metricsPort }}
+              containerPort: 9090
               protocol: TCP
-          envFrom:
-            - secretRef:
-                name: {{ .Values.secretRef.name }}
           env:
-            {{- range $k, $v := .Values.env }}
-            - name: {{ $k }}
-              value: {{ $v | quote }}
-            {{- end }}
+            - name: API_GATEWAY_URL
+              value: {{ .Values.env.API_GATEWAY_URL | quote }}
+            - name: AUDIT_STORE_URL
+              value: {{ .Values.env.AUDIT_STORE_URL | quote }}
+            - name: MODEL_REGISTRY_URL
+              value: {{ .Values.env.MODEL_REGISTRY_URL | quote }}
+            - name: GRAFANA_URL
+              value: {{ .Values.env.GRAFANA_URL | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.env.LOG_LEVEL | quote }}
+            # GATEWAY_API_KEY is sourced from the Secret, not plain values.
+            - name: GATEWAY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "admin-portal.fullname" . }}-secret
+                  key: gateway-api-key
           livenessProbe:
-            {{- toYaml .Values.livenessProbe | nindent 12 }}
+            httpGet:
+              path: /portal/health
+              port: 8084
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
           readinessProbe:
-            {{- toYaml .Values.readinessProbe | nindent 12 }}
+            httpGet:
+              path: /portal/health
+              port: 8084
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

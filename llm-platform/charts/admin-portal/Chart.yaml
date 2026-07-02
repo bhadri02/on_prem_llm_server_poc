@@ -1,6 +1,15 @@
 apiVersion: v2
 name: admin-portal
-description: "Admin Portal sub-chart — platform administration UI for the LLM platform POC"
+description: "Admin Portal — combined platform administration and developer UI for the Enterprise On-Premises LLM Platform (POC)"
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
+keywords:
+  - llm
+  - admin
+  - portal
+  - observability
+home: ""
+sources: []
+maintainers:
+  - name: platform-team

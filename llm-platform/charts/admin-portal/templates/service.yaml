@@ -9,11 +9,11 @@ spec:
   ports:
     - name: http
       port: {{ .Values.service.port }}
-      targetPort: {{ .Values.service.port }}
+      targetPort: 8084
       protocol: TCP
     - name: metrics
-      port: {{ .Values.metricsPort }}
-      targetPort: {{ .Values.metricsPort }}
+      port: {{ .Values.service.metricsPort }}
+      targetPort: 9090
       protocol: TCP
   selector:
     {{- include "admin-portal.selectorLabels" . | nindent 4 }}
