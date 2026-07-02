@@ -1,0 +1,62 @@
+replicaCount: 1
+
+image:
+  repository: registry.local/admin-portal
+  tag: ""
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8084
+
+metricsPort: 9090
+
+secretRef:
+  name: "llm-poc-secrets"
+
+serviceAccount:
+  name: "llm-platform"
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "256Mi"
+  limits:
+    cpu: "1"
+    memory: "1Gi"
+
+autoscaling:
+  enabled: false
+
+vault:
+  enabled: false
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8084
+  initialDelaySeconds: 15
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 1
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8084
+  initialDelaySeconds: 15
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 1
+
+ingress:
+  enabled: false
+  host: "llm-portal.local"
+  servicePort: 8084
+
+env: {}
+
+persistence:
+  enabled: false

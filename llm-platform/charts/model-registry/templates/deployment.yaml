@@ -14,34 +14,44 @@ spec:
       labels:
         {{- include "model-registry.labels" . | nindent 8 }}
     spec:
+      serviceAccountName: {{ .Values.serviceAccount.name | default "llm-platform" }}
       containers:
         - name: model-registry
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default "latest" }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
-              containerPort: 5000
+              containerPort: {{ .Values.service.port }}
               protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.metricsPort }}
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secretRef.name }}
           env:
-            - name: LOG_LEVEL
-              value: {{ .Values.env.LOG_LEVEL | quote }}
-            - name: STORAGE_PATH
-              value: {{ .Values.env.STORAGE_PATH | quote }}
-            - name: REGISTRY_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.apiKeySecret.name }}
-                  key: {{ .Values.apiKeySecret.key }}
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- if .Values.persistence.enabled }}
           volumeMounts:
             - name: data
-              mountPath: /data
+              mountPath: {{ .Values.persistence.mountPath }}
+          {{- end }}
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:
             {{- toYaml .Values.readinessProbe | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      {{- if .Values.persistence.enabled }}
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "model-registry.fullname" . }}-data
+      {{- else }}
+      volumes:
+        - name: data
+          emptyDir: {}
+      {{- end }}

@@ -1,6 +1,18 @@
 replicaCount: 1
 
 # ---------------------------------------------------------------------------
+# Secret reference — Kubernetes Secret injected via envFrom
+# ---------------------------------------------------------------------------
+secretRef:
+  name: "llm-poc-secrets"
+
+# ---------------------------------------------------------------------------
+# Service account for all pods in this chart
+# ---------------------------------------------------------------------------
+serviceAccount:
+  name: "llm-platform"
+
+# ---------------------------------------------------------------------------
 # Ollama inference engine
 # ---------------------------------------------------------------------------
 ollama:
@@ -24,12 +36,32 @@ ollama:
     OLLAMA_HOST: "0.0.0.0"
     OLLAMA_KEEP_ALIVE: "24h"
 
+  livenessProbe:
+    httpGet:
+      path: /api/tags
+      port: 11434
+    initialDelaySeconds: 30
+    periodSeconds: 15
+    timeoutSeconds: 30
+    failureThreshold: 5
+    successThreshold: 1
+
+  readinessProbe:
+    httpGet:
+      path: /api/tags
+      port: 11434
+    initialDelaySeconds: 30
+    periodSeconds: 15
+    timeoutSeconds: 30
+    failureThreshold: 5
+    successThreshold: 1
+
 # ---------------------------------------------------------------------------
 # Inference Adapter (FastAPI, IMF ↔ Ollama translation)
 # ---------------------------------------------------------------------------
 adapter:
   image:
-    repository: "registry.internal/inference-adapter"
+    repository: "registry.local/inference-adapter"
     tag: ""          # set via CI --set adapter.image.tag=<sha>; defaults to "latest"
     pullPolicy: IfNotPresent
 
@@ -45,6 +77,26 @@ adapter:
     DEFAULT_MAX_TOKENS: "2048"
     MAX_TOKENS_LIMIT: "4096"
     DEFAULT_TEMPERATURE: "0.7"
+
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8087
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8087
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
 
 # ---------------------------------------------------------------------------
 # Models to pre-pull via init Job
@@ -81,3 +133,4 @@ initJob:
   enabled: true
   image: "curlimages/curl:latest"
   pullTimeoutSeconds: 6000
+  backoffLimit: 2

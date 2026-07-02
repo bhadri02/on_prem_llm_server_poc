@@ -1,6 +1,6 @@
 apiVersion: v2
 name: router
-description: Intelligent Router Layer 3 for the Enterprise LLM Platform (POC)
+description: "Intelligent Router sub-chart — routes requests to inference, cache, or agent-framework"
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

@@ -14,58 +14,44 @@ spec:
       labels:
         {{- include "security-layer.labels" . | nindent 8 }}
     spec:
+      serviceAccountName: {{ .Values.serviceAccount.name | default "llm-platform" }}
       containers:
         - name: security-layer
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default "latest" }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
-              containerPort: 8081
+              containerPort: {{ .Values.service.port }}
               protocol: TCP
             - name: metrics
-              containerPort: 9090
+              containerPort: {{ .Values.metricsPort }}
               protocol: TCP
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secretRef.name }}
           env:
-            - name: LOG_LEVEL
-              value: {{ .Values.env.LOG_LEVEL | quote }}
-            - name: DOWNSTREAM_ROUTER_URL
-              value: {{ .Values.env.DOWNSTREAM_ROUTER_URL | quote }}
-            - name: PII_ENABLED
-              value: {{ .Values.env.PII_ENABLED | quote }}
-            - name: INJECTION_PATTERNS_PATH
-              value: {{ .Values.env.INJECTION_PATTERNS_PATH | quote }}
-            - name: AUDIT_STORE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: security-layer-secrets
-                  key: AUDIT_STORE_URL
-            - name: AUDIT_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: security-layer-secrets
-                  key: AUDIT_API_KEY
-          volumeMounts:
-            - name: injection-patterns
-              mountPath: /config
-              readOnly: true
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
           livenessProbe:
-            httpGet:
-              path: /health
-              port: 8081
-            initialDelaySeconds: 15
-            periodSeconds: 30
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:
-            httpGet:
-              path: /health
-              port: 8081
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.persistence.enabled }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.persistence.mountPath }}
+          {{- end }}
+      {{- if .Values.persistence.enabled }}
       volumes:
-        - name: injection-patterns
-          configMap:
-            name: {{ include "security-layer.fullname" . }}-patterns
-            items:
-              - key: injection_patterns.yaml
-                path: injection_patterns.yaml
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "security-layer.fullname" . }}-data
+      {{- else }}
+      volumes:
+        - name: data
+          emptyDir: {}
+      {{- end }}

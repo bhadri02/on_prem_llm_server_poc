@@ -12,6 +12,6 @@ spec:
     matchNames:
       - {{ .Release.Namespace }}
   endpoints:
-    - port: http
-      path: /health
+    - port: metrics
+      path: /metrics
       interval: 30s

@@ -12,51 +12,42 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "audit-store.selectorLabels" . | nindent 8 }}
+        {{- include "audit-store.labels" . | nindent 8 }}
     spec:
+      serviceAccountName: {{ .Values.serviceAccount.name | default "llm-platform" }}
       containers:
         - name: audit-store
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default "latest" }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
-              containerPort: 9200
+              containerPort: {{ .Values.service.port }}
               protocol: TCP
             - name: metrics
-              containerPort: 9090
+              containerPort: {{ .Values.metricsPort }}
               protocol: TCP
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secretRef.name }}
           env:
-            - name: AUDIT_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: audit-store-secrets
-                  key: AUDIT_API_KEY
-            - name: DB_PATH
-              value: {{ .Values.env.DB_PATH | quote }}
-            - name: LOG_LEVEL
-              value: {{ .Values.env.LOG_LEVEL | quote }}
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
           livenessProbe:
-            httpGet:
-              path: /health
-              port: 9200
-            initialDelaySeconds: 10
-            periodSeconds: 30
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:
-            httpGet:
-              path: /health
-              port: 9200
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if .Values.persistence.enabled }}
           volumeMounts:
             - name: data
-              mountPath: /data
-          {{- end }}
-      {{- if .Values.persistence.enabled }}
+              mountPath: {{ .Values.persistence.mountPath }}
       volumes:
         - name: data
+          {{- if .Values.persistence.enabled }}
           persistentVolumeClaim:
             claimName: {{ include "audit-store.fullname" . }}-data
-      {{- end }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

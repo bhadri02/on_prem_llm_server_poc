@@ -1,14 +1,7 @@
-{{/*
-Expand the name of the chart.
-*/}}
 {{- define "router.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{/*
-Create a default fully qualified app name.
-Truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
-*/}}
 {{- define "router.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
@@ -22,24 +15,10 @@ Truncate at 63 chars because some Kubernetes name fields are limited to this (by
 {{- end }}
 {{- end }}
 
-{{/*
-Create chart name and version as used by the chart label.
-*/}}
 {{- define "router.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{/*
-Selector labels
-*/}}
-{{- define "router.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "router.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end }}
-
-{{/*
-Common labels
-*/}}
 {{- define "router.labels" -}}
 helm.sh/chart: {{ include "router.chart" . }}
 {{ include "router.selectorLabels" . }}
@@ -47,4 +26,9 @@ helm.sh/chart: {{ include "router.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{- define "router.selectorLabels" -}}
+app.kubernetes.io/name: router
+app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
