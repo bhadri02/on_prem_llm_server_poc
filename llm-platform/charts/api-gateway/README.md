@@ -1,74 +1,127 @@
 # api-gateway
 
-**Service purpose:** API Gateway — entry point for all external LLM platform requests. Receives inbound HTTP traffic from the NGINX Ingress Controller, authenticates callers via the shared `llm-poc-secrets` API key, and forwards requests downstream to the security layer.
+**Layer 1 — API Gateway** for the Enterprise On-Prem LLM Platform (POC).
 
-## Ports
+The API Gateway is the single ingress point for all LLM traffic from enterprise consumer applications. It accepts OpenAI-compatible HTTP requests, authenticates callers via a static API key, applies in-memory sliding-window rate limiting, normalizes payloads into the Internal Message Format (IMF), and forwards them to the Security & Governance Layer. Responses from downstream are serialized back to OpenAI-compatible JSON before being returned to the caller.
 
-| Name    | Port | Description            |
-|---------|------|------------------------|
-| http    | 8080 | Primary HTTP API port  |
-| metrics | 9090 | Prometheus metrics     |
+This chart targets the **POC phase**. Production concerns (TLS, Vault, HPA, mTLS, OIDC) are explicitly deferred to Phase 2.
 
-## Cluster URL
+---
+
+## Middleware Execution Order
+
+Middleware is registered in reverse order in FastAPI/Starlette. The chart deploys a single container with the following execution order:
 
 ```
-http://api-gateway:8080
+Prometheus → Logging → Auth → RateLimit → Router
 ```
 
-(Valid within the `llm-poc` namespace using Kubernetes short-form DNS.)
+---
 
-## Docker Build
+## Prerequisites
+
+- Kubernetes **1.24+**
+- Helm **3.x**
+- NGINX ingress controller installed and managing the `nginx` IngressClass
+- Prometheus Operator (for `ServiceMonitor` CRD) — required only if `observability.metrics.enabled: true`
+
+---
+
+## ⚠️ Security Warnings
+
+> **Read before deploying.**
+
+### image.tag MUST be set
+
+`image.tag` defaults to an **empty string**. Deploying with an empty tag is **invalid** — it will either cause the deployment to fail or pull an unintended (potentially stale or non-existent) image from the registry.
+
+You **must** override `image.tag` at every deploy:
+
+```
+--set image.tag=1.0.0
+```
+
+### GATEWAY_API_KEY MUST be replaced
+
+`env.GATEWAY_API_KEY` defaults to `poc-secret-key`. This value is **insecure** and will expose the gateway to unauthorized access if used outside a local development environment.
+
+You **must** replace this value before any deployment outside a local dev cluster:
+
+```
+--set env.GATEWAY_API_KEY=<your-secret-key>
+```
+
+---
+
+## Quick Start
 
 ```bash
-docker build -t registry.local/api-gateway:dev .
+helm install api-gateway ./llm-platform/charts/api-gateway \
+  --set image.tag=1.0.0 \
+  --set env.GATEWAY_API_KEY=<your-secret-key> \
+  --set env.DOWNSTREAM_SECURITY_URL=http://security-layer:8081
 ```
 
-## Values Reference
-
-| Key                          | Type    | Default                        | Description                                                      |
-|------------------------------|---------|--------------------------------|------------------------------------------------------------------|
-| `replicaCount`               | int     | `1`                            | Number of pod replicas                                           |
-| `image.repository`           | string  | `registry.local/api-gateway`   | Container image repository                                       |
-| `image.tag`                  | string  | `""`                           | Image tag; empty string falls back to `latest` in the template   |
-| `image.pullPolicy`           | string  | `IfNotPresent`                 | Kubernetes image pull policy                                     |
-| `service.type`               | string  | `ClusterIP`                    | Kubernetes Service type                                          |
-| `service.port`               | int     | `8080`                         | Service and container HTTP port                                  |
-| `metricsPort`                | int     | `9090`                         | Port on which `/metrics` is exposed for Prometheus scraping      |
-| `secretRef.name`             | string  | `llm-poc-secrets`              | Name of the Kubernetes Secret injected via `envFrom.secretRef`   |
-| `serviceAccount.name`        | string  | `llm-platform`                 | ServiceAccount the pod runs under                                |
-| `resources.requests.cpu`     | string  | `100m`                         | Minimum CPU requested from the scheduler                         |
-| `resources.requests.memory`  | string  | `256Mi`                        | Minimum memory requested from the scheduler                      |
-| `resources.limits.cpu`       | string  | `1`                            | Maximum CPU the container may consume                            |
-| `resources.limits.memory`    | string  | `1Gi`                          | Maximum memory the container may consume                         |
-| `autoscaling.enabled`        | bool    | `false`                        | Enable HorizontalPodAutoscaler (Phase 2)                         |
-| `vault.enabled`              | bool    | `false`                        | Enable HashiCorp Vault Agent sidecar injection (Phase 2)         |
-| `livenessProbe`              | object  | see values.yaml                | Liveness probe config (`httpGet /health:8080`, 15s delay)        |
-| `readinessProbe`             | object  | see values.yaml                | Readiness probe config (`httpGet /health:8080`, 15s delay)       |
-| `ingress.enabled`            | bool    | `false`                        | Create an Ingress resource for external access                   |
-| `ingress.host`               | string  | `llm-poc.local`                | Hostname for the Ingress rule                                    |
-| `ingress.servicePort`        | int     | `8080`                         | Backend service port referenced by the Ingress                   |
-| `env`                        | map     | `{}`                           | Additional environment variables injected as key/value pairs     |
-| `persistence.enabled`        | bool    | `false`                        | Mount a PersistentVolumeClaim (api-gateway is stateless)         |
-
-## Ingress
-
-When `ingress.enabled: true` the chart creates an Ingress resource routing
-`llm-poc.local` → `api-gateway:8080` via `ingressClassName: nginx`.
-
-Add the following entry to `/etc/hosts` (or local DNS) to reach the gateway:
-
-```
-<cluster-ip>  llm-poc.local
-```
-
-## Secret Injection
-
-All pods mount the `llm-poc-secrets` Kubernetes Secret via `envFrom.secretRef`.
-Create it before installing the chart:
+To upgrade an existing release:
 
 ```bash
-kubectl create secret generic llm-poc-secrets \
-  --namespace llm-poc \
-  --from-literal=GATEWAY_API_KEY=poc-secret-key \
-  --from-literal=REDIS_PASSWORD=""
+helm upgrade api-gateway ./llm-platform/charts/api-gateway \
+  --set image.tag=1.1.0 \
+  --set env.GATEWAY_API_KEY=<your-secret-key>
 ```
+
+---
+
+## Configuration Reference
+
+| Parameter | Description | Default |
+|---|---|---|
+| `replicaCount` | Number of pod replicas | `1` |
+| `image.repository` | Container image repository | `registry.local/api-gateway` |
+| `image.tag` | Image tag — **must be overridden at deploy time** | `""` (empty — invalid) |
+| `image.pullPolicy` | Image pull policy | `IfNotPresent` |
+| `service.type` | Kubernetes Service type | `ClusterIP` |
+| `service.port` | Service port | `8080` |
+| `ingress.enabled` | Enable Ingress resource | `true` |
+| `ingress.className` | IngressClass name | `nginx` |
+| `ingress.hosts` | Ingress host/path rules | `llm-poc.local` with `/v1` and `/health` |
+| `env.GATEWAY_API_KEY` | Static API key for authentication — **replace before non-dev use** | `poc-secret-key` |
+| `env.DOWNSTREAM_SECURITY_URL` | Base URL of the Security & Governance Layer | `http://security-layer:8081` |
+| `env.LOG_LEVEL` | Minimum log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) | `INFO` |
+| `env.PORT` | HTTP port the application listens on | `8080` |
+| `env.METRICS_PORT` | Prometheus metrics port | `9090` |
+| `env.DOWNSTREAM_TIMEOUT` | Timeout (seconds) for downstream HTTP calls | `10.0` |
+| `env.RATE_LIMIT_REQUESTS` | Maximum requests per window per API key | `60` |
+| `env.RATE_LIMIT_WINDOW_SECONDS` | Sliding window size in seconds | `60` |
+| `resources.requests.cpu` | CPU request | `100m` |
+| `resources.requests.memory` | Memory request | `256Mi` |
+| `resources.limits.cpu` | CPU limit | `500m` |
+| `resources.limits.memory` | Memory limit | `512Mi` |
+| `autoscaling.enabled` | Enable HorizontalPodAutoscaler | `false` (POC) |
+| `vault.enabled` | Enable HashiCorp Vault agent sidecar | `false` (POC) |
+| `observability.metrics.enabled` | Enable Prometheus ServiceMonitor | `true` |
+| `observability.metrics.port` | Metrics scrape port | `9090` |
+
+---
+
+## Network Policy
+
+The chart deploys a `NetworkPolicy` that restricts traffic:
+
+- **Ingress:** only from pods with label `app.kubernetes.io/name: ingress-nginx`
+- **Egress:**
+  - TCP port `8081` to pods with label `app.kubernetes.io/name: security-layer`
+  - UDP/TCP port `53` for DNS resolution
+
+---
+
+## POC Non-Goals (Phase 2)
+
+The following are explicitly out of scope for this chart revision:
+
+- TLS/HTTPS termination
+- HashiCorp Vault secret injection (`vault.enabled: false`)
+- Horizontal Pod Autoscaling (`autoscaling.enabled: false`)
+- mTLS between services
+- OIDC/OAuth2 authentication
+- Redis-backed rate limiting

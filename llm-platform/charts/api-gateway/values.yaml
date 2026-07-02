@@ -2,61 +2,49 @@ replicaCount: 1
 
 image:
   repository: registry.local/api-gateway
-  tag: ""
+  tag: ""          # MUST be overridden at deploy time — deploying with empty tag is invalid
   pullPolicy: IfNotPresent
 
 service:
   type: ClusterIP
   port: 8080
 
-metricsPort: 9090
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: llm-poc.local
+      paths:
+        - path: /v1
+          pathType: Prefix
+        - path: /health
+          pathType: Exact
 
-secretRef:
-  name: "llm-poc-secrets"
-
-serviceAccount:
-  name: "llm-platform"
+env:
+  GATEWAY_API_KEY: "poc-secret-key"          # MUST be replaced before any non-dev deployment
+  DOWNSTREAM_SECURITY_URL: "http://security-layer:8081"
+  LOG_LEVEL: "INFO"
+  PORT: "8080"
+  METRICS_PORT: "9090"
+  DOWNSTREAM_TIMEOUT: "10.0"
+  RATE_LIMIT_REQUESTS: "60"
+  RATE_LIMIT_WINDOW_SECONDS: "60"
 
 resources:
   requests:
     cpu: "100m"
     memory: "256Mi"
   limits:
-    cpu: "1"
-    memory: "1Gi"
+    cpu: "500m"
+    memory: "512Mi"
 
 autoscaling:
-  enabled: false
+  enabled: false   # no HPA for POC
 
 vault:
-  enabled: false
+  enabled: false   # secrets via env vars for POC
 
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 8080
-  initialDelaySeconds: 15
-  periodSeconds: 15
-  timeoutSeconds: 5
-  failureThreshold: 3
-  successThreshold: 1
-
-readinessProbe:
-  httpGet:
-    path: /health
-    port: 8080
-  initialDelaySeconds: 15
-  periodSeconds: 15
-  timeoutSeconds: 5
-  failureThreshold: 3
-  successThreshold: 1
-
-ingress:
-  enabled: false
-  host: "llm-poc.local"
-  servicePort: 8080
-
-env: {}
-
-persistence:
-  enabled: false
+observability:
+  metrics:
+    enabled: true
+    port: 9090
