@@ -1,0 +1,65 @@
+"""
+Configuration module for the API Gateway (Layer 1).
+
+Defines the Settings class (pydantic-settings BaseSettings) that reads all
+values from environment variables. Exposes a cached get_settings() factory
+used throughout the application.
+
+Startup validation: if GATEWAY_API_KEY is empty or unset the validator raises
+ValueError and the process fails to start.
+
+Validates: Requirements 2.1, 10.1, 10.2, 10.3, 10.4, 12.1
+"""
+
+from __future__ import annotations
+
+from functools import lru_cache
+
+from pydantic import field_validator
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    # Required — env: GATEWAY_API_KEY; empty string causes startup failure
+    gateway_api_key: str
+
+    # Required — env: DOWNSTREAM_SECURITY_URL
+    downstream_security_url: str
+
+    # env: LOG_LEVEL — default "INFO"
+    log_level: str = "INFO"
+
+    # env: PORT — default 8080
+    port: int = 8080
+
+    # env: METRICS_PORT — default 9090
+    metrics_port: int = 9090
+
+    # env: RATE_LIMIT_REQUESTS — default 60 requests per window
+    rate_limit_requests: int = 60
+
+    # env: RATE_LIMIT_WINDOW_SECONDS — default 60 second window
+    rate_limit_window_seconds: int = 60
+
+    # env: DOWNSTREAM_TIMEOUT — default 10.0 seconds
+    downstream_timeout_seconds: float = 10.0
+
+    model_config = {
+        "env_prefix": "",
+        "case_sensitive": False,
+    }
+
+    @field_validator("gateway_api_key")
+    @classmethod
+    def api_key_must_be_non_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError(
+                "GATEWAY_API_KEY must be set to a non-empty string. "
+                "The API Gateway cannot start without a valid API key."
+            )
+        return v
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
