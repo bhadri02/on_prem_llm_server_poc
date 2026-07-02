@@ -1,0 +1,21 @@
+# API Gateway (Layer 1) — pinned dependencies
+# Python 3.11+
+
+# Web framework
+fastapi==0.111.0
+
+# ASGI server
+uvicorn[standard]==0.29.0
+
+# Async HTTP client (downstream forwarding + streaming proxy)
+httpx==0.27.0
+
+# Data validation and serialization
+pydantic==2.7.1
+pydantic-settings==2.2.1
+
+# Prometheus metrics exposition
+prometheus-client==0.20.0
+
+# Property-based testing (unit + integration tests)
+hypothesis==6.100.0
