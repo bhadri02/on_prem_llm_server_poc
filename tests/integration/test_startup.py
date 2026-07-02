@@ -1,201 +1,220 @@
 """
-tests/integration/test_startup.py — Integration tests for the Security &
-Governance Layer lifespan startup validation.
+tests/integration/test_startup.py
 
-Covers:
-  - test_empty_downstream_router_url_exits  : DOWNSTREAM_ROUTER_URL="" → sys.exit(1)
-  - test_empty_audit_store_url_exits        : AUDIT_STORE_URL="" → sys.exit(1)
-  - test_empty_audit_api_key_exits          : AUDIT_API_KEY="" → sys.exit(1)
-  - test_nonexistent_patterns_path_exits    : non-existent file → sys.exit(1)
-  - test_malformed_yaml_patterns_exits      : malformed YAML → sys.exit(1)
-  - test_empty_patterns_list_warns_but_starts: empty patterns → starts ok
-  - test_valid_config_starts_successfully   : valid config → app.state fully set
+Integration tests for the Intelligent Router lifespan startup validation.
+
+Covers subtask 29.4:
+  - MODEL_MATRIX_PATH unset (settings=None) → sys.exit(1) with ERROR log
+  - INFERENCE_TIMEOUT_SECONDS=0 → sys.exit(1)
+  - INFERENCE_TIMEOUT_SECONDS=601 → sys.exit(1)
+  - HEALTH_CHECK_TIMEOUT_SECONDS=31 → sys.exit(1)
+  - Valid config → app.state has classifier_rules, model_matrix, http_client set
+  - YAML file not found (bad path) → sys.exit(1)
+
+Strategy
+--------
+The real lifespan in main.py calls sys.exit(1) on startup failures. We invoke
+the lifespan directly via ``app.router.lifespan_context(app)`` and assert
+``pytest.raises(SystemExit)``.
+
+The lifespan reads the module-level ``settings`` name from
+``intelligent_router.main`` (imported at module top). We patch THAT reference
+(``intelligent_router.main.settings``) so the lifespan sees our mock value.
+
+For the valid-config test we copy the real YAML files into a temp directory so
+the test is isolated from repo-root file changes.
+
+Requirements: 14.2, 14.3, 14.4, 14.7, 14.8
 """
 
-import os
-import tempfile
-
-import pytest
-from fastapi import FastAPI
+import shutil
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from security_layer.main import lifespan
+import pytest
+
+import intelligent_router.main as main_mod
+from intelligent_router.main import create_app
+
+# ---------------------------------------------------------------------------
+# Path to the real YAML config files at repo root
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = Path(__file__).parent.parent.parent
+REAL_RULES_YAML = _REPO_ROOT / "task_classifier_rules.yaml"
+REAL_MATRIX_YAML = _REPO_ROOT / "model_matrix.yaml"
 
 
 # ---------------------------------------------------------------------------
-# Helper
+# Helper: build a valid mock settings object pointing at real YAMLs
 # ---------------------------------------------------------------------------
 
 
-def _mock_settings(
-    downstream_router_url: str = "http://router:8082",
-    audit_store_url: str = "http://audit:9200",
-    audit_api_key: str = "test-key",
-    injection_patterns_path: str = "/some/path",
-    pii_enabled: bool = False,
-) -> MagicMock:
-    """Return a MagicMock that quacks like Settings."""
+def _valid_settings(rules_path: str, matrix_path: str) -> MagicMock:
+    """Return a MagicMock that passes all lifespan validation checks."""
     s = MagicMock()
-    s.downstream_router_url = downstream_router_url
-    s.audit_store_url = audit_store_url
-    s.audit_api_key = audit_api_key
-    s.injection_patterns_path = injection_patterns_path
-    s.pii_enabled = pii_enabled
-    s.log_level = "WARNING"
+    s.model_matrix_path = matrix_path
+    s.task_rules_path = rules_path
+    s.audit_store_url = "http://audit-store:9200"
+    s.cache_url = "http://cache:8086"
+    s.inference_adapter_url = "http://inference-adapter:8087"
+    s.inference_timeout_seconds = 30      # valid: [1, 600]
+    s.health_check_timeout_seconds = 5    # valid: [1, 30]
+    s.log_level = "INFO"
     return s
 
 
 # ---------------------------------------------------------------------------
-# Failure cases — each must sys.exit(1)
+# 29.4.1 — settings=None (e.g. MODEL_MATRIX_PATH absent) → sys.exit(1)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_empty_downstream_router_url_exits():
-    """DOWNSTREAM_ROUTER_URL="" triggers sys.exit(1)."""
-    mock_settings = _mock_settings(downstream_router_url="")
+async def test_missing_required_env_var_exits():
+    """settings=None (required env vars absent) → lifespan calls sys.exit(1).
 
-    test_app = FastAPI(lifespan=lifespan)
-    with patch("security_layer.main.settings", mock_settings):
+    When all three required env vars are absent, config.py assigns
+    ``settings = None``. The lifespan guard detects this and exits.
+    """
+    app = create_app()
+    with patch.object(main_mod, "settings", None):
         with pytest.raises(SystemExit) as exc_info:
-            async with lifespan(test_app):
+            async with app.router.lifespan_context(app):
                 pass  # pragma: no cover
-
     assert exc_info.value.code == 1
 
 
+# ---------------------------------------------------------------------------
+# 29.4.2 — INFERENCE_TIMEOUT_SECONDS=0 → sys.exit(1)
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
-async def test_empty_audit_store_url_exits():
-    """AUDIT_STORE_URL="" triggers sys.exit(1)."""
-    mock_settings = _mock_settings(audit_store_url="")
+async def test_inference_timeout_zero_exits():
+    """INFERENCE_TIMEOUT_SECONDS=0 is outside [1,600] → sys.exit(1)."""
+    mock_settings = _valid_settings(str(REAL_RULES_YAML), str(REAL_MATRIX_YAML))
+    mock_settings.inference_timeout_seconds = 0  # out of range
 
-    test_app = FastAPI(lifespan=lifespan)
-    with patch("security_layer.main.settings", mock_settings):
+    app = create_app()
+    with patch.object(main_mod, "settings", mock_settings):
         with pytest.raises(SystemExit) as exc_info:
-            async with lifespan(test_app):
+            async with app.router.lifespan_context(app):
                 pass  # pragma: no cover
-
     assert exc_info.value.code == 1
 
 
+# ---------------------------------------------------------------------------
+# 29.4.3 — INFERENCE_TIMEOUT_SECONDS=601 → sys.exit(1)
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
-async def test_empty_audit_api_key_exits():
-    """AUDIT_API_KEY="" triggers sys.exit(1)."""
-    mock_settings = _mock_settings(audit_api_key="")
+async def test_inference_timeout_601_exits():
+    """INFERENCE_TIMEOUT_SECONDS=601 is outside [1,600] → sys.exit(1)."""
+    mock_settings = _valid_settings(str(REAL_RULES_YAML), str(REAL_MATRIX_YAML))
+    mock_settings.inference_timeout_seconds = 601  # out of range
 
-    test_app = FastAPI(lifespan=lifespan)
-    with patch("security_layer.main.settings", mock_settings):
+    app = create_app()
+    with patch.object(main_mod, "settings", mock_settings):
         with pytest.raises(SystemExit) as exc_info:
-            async with lifespan(test_app):
+            async with app.router.lifespan_context(app):
                 pass  # pragma: no cover
-
     assert exc_info.value.code == 1
 
 
+# ---------------------------------------------------------------------------
+# 29.4.4 — HEALTH_CHECK_TIMEOUT_SECONDS=31 → sys.exit(1)
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
-async def test_nonexistent_patterns_path_exits():
-    """Non-existent INJECTION_PATTERNS_PATH triggers sys.exit(1)."""
-    mock_settings = _mock_settings(
-        injection_patterns_path="/tmp/does_not_exist_xyz_abc_999.yaml"
+async def test_health_check_timeout_31_exits():
+    """HEALTH_CHECK_TIMEOUT_SECONDS=31 is outside [1,30] → sys.exit(1)."""
+    mock_settings = _valid_settings(str(REAL_RULES_YAML), str(REAL_MATRIX_YAML))
+    mock_settings.health_check_timeout_seconds = 31  # out of range
+
+    app = create_app()
+    with patch.object(main_mod, "settings", mock_settings):
+        with pytest.raises(SystemExit) as exc_info:
+            async with app.router.lifespan_context(app):
+                pass  # pragma: no cover
+    assert exc_info.value.code == 1
+
+
+# ---------------------------------------------------------------------------
+# 29.4.5 — YAML file not found → sys.exit(1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rules_yaml_not_found_exits():
+    """Non-existent TASK_RULES_PATH → load_classifier_rules returns None → sys.exit(1)."""
+    mock_settings = _valid_settings(
+        "/tmp/does_not_exist_rules_xyz.yaml",   # bad rules path
+        str(REAL_MATRIX_YAML),
     )
 
-    test_app = FastAPI(lifespan=lifespan)
-    with patch("security_layer.main.settings", mock_settings):
+    app = create_app()
+    with patch.object(main_mod, "settings", mock_settings):
         with pytest.raises(SystemExit) as exc_info:
-            async with lifespan(test_app):
+            async with app.router.lifespan_context(app):
                 pass  # pragma: no cover
-
     assert exc_info.value.code == 1
 
 
 @pytest.mark.asyncio
-async def test_malformed_yaml_patterns_exits(tmp_path):
-    """Malformed YAML at INJECTION_PATTERNS_PATH triggers sys.exit(1)."""
-    bad_yaml_file = tmp_path / "bad_patterns.yaml"
-    # Write intentionally broken YAML (unmatched braces / invalid structure)
-    bad_yaml_file.write_text("patterns: [\n  - 'unclosed bracket\n")
+async def test_matrix_yaml_not_found_exits():
+    """Non-existent MODEL_MATRIX_PATH → load_model_matrix returns None → sys.exit(1)."""
+    mock_settings = _valid_settings(
+        str(REAL_RULES_YAML),
+        "/tmp/does_not_exist_matrix_xyz.yaml",  # bad matrix path
+    )
 
-    mock_settings = _mock_settings(injection_patterns_path=str(bad_yaml_file))
-
-    test_app = FastAPI(lifespan=lifespan)
-    with patch("security_layer.main.settings", mock_settings):
+    app = create_app()
+    with patch.object(main_mod, "settings", mock_settings):
         with pytest.raises(SystemExit) as exc_info:
-            async with lifespan(test_app):
+            async with app.router.lifespan_context(app):
                 pass  # pragma: no cover
-
     assert exc_info.value.code == 1
 
 
 # ---------------------------------------------------------------------------
-# Warning path — starts successfully with empty patterns
+# 29.4.6 — Valid config → app.state has classifier_rules, model_matrix, http_client
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_empty_patterns_list_warns_but_starts(tmp_path):
-    """Empty patterns list logs a WARNING but the lifespan completes normally."""
-    patterns_file = tmp_path / "empty_patterns.yaml"
-    patterns_file.write_text("patterns: []\n")
+async def test_valid_config_sets_app_state(tmp_path):
+    """Valid configuration → lifespan completes and app.state is fully populated.
 
-    mock_settings = _mock_settings(injection_patterns_path=str(patterns_file))
+    Copies the real YAML files into tmp_path so the test is isolated from
+    changes to the repo-root files.
+    """
+    rules_file = tmp_path / "task_classifier_rules.yaml"
+    matrix_file = tmp_path / "model_matrix.yaml"
+    shutil.copy(REAL_RULES_YAML, rules_file)
+    shutil.copy(REAL_MATRIX_YAML, matrix_file)
 
-    test_app = FastAPI(lifespan=lifespan)
-    with patch("security_layer.main.settings", mock_settings):
-        # Should NOT raise SystemExit
-        async with lifespan(test_app):
-            # App started — patterns list is empty but state is populated
-            assert test_app.state.patterns == []
-            assert test_app.state.analyzer is None   # pii_enabled=False
-            assert test_app.state.anonymizer is None
+    mock_settings = _valid_settings(str(rules_file), str(matrix_file))
 
-
-# ---------------------------------------------------------------------------
-# Happy path — valid configuration starts fully
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_valid_config_starts_successfully(tmp_path):
-    """Valid configuration populates app.state.patterns and app.state.analyzer."""
-    patterns_file = tmp_path / "patterns.yaml"
-    patterns_file.write_text(
-        "patterns:\n"
-        "  - 'ignore previous instructions'\n"
-        "  - 'you are now'\n"
-    )
-
-    mock_settings = _mock_settings(
-        injection_patterns_path=str(patterns_file),
-        pii_enabled=False,
-    )
-
-    test_app = FastAPI(lifespan=lifespan)
-    with patch("security_layer.main.settings", mock_settings):
-        async with lifespan(test_app):
-            assert test_app.state.patterns is not None
-            assert len(test_app.state.patterns) == 2
-            assert test_app.state.settings is mock_settings
-            # PII disabled → analyzer/anonymizer remain None
-            assert test_app.state.analyzer is None
-            assert test_app.state.anonymizer is None
-            # Blocklist is populated from content_safety.BLOCKLIST
-            assert isinstance(test_app.state.blocklist, list)
-            assert len(test_app.state.blocklist) > 0
-
-
-@pytest.mark.asyncio
-async def test_valid_config_pii_enabled_starts_successfully(tmp_path):
-    """Valid config with pii_enabled=True initialises Presidio engines on app.state."""
-    patterns_file = tmp_path / "patterns.yaml"
-    patterns_file.write_text("patterns:\n  - 'ignore previous'\n")
-
-    mock_settings = _mock_settings(
-        injection_patterns_path=str(patterns_file),
-        pii_enabled=True,
-    )
-
-    test_app = FastAPI(lifespan=lifespan)
-    with patch("security_layer.main.settings", mock_settings):
-        async with lifespan(test_app):
-            assert test_app.state.analyzer is not None
-            assert test_app.state.anonymizer is not None
+    app = create_app()
+    with patch.object(main_mod, "settings", mock_settings):
+        async with app.router.lifespan_context(app):
+            # All three state attributes must be populated
+            assert app.state.classifier_rules is not None, (
+                "app.state.classifier_rules must be set after successful startup"
+            )
+            assert app.state.model_matrix is not None, (
+                "app.state.model_matrix must be set after successful startup"
+            )
+            assert app.state.http_client is not None, (
+                "app.state.http_client must be set after successful startup"
+            )
+            # Quick sanity checks on loaded data
+            assert app.state.classifier_rules.total_keyword_count > 0, (
+                "classifier_rules must have at least one keyword"
+            )
+            assert len(app.state.model_matrix.models) > 0, (
+                "model_matrix must have at least one model entry"
+            )
+    # After context exit, http_client is closed — no assertion needed here

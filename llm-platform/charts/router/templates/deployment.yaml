@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "router.fullname" . }}
+  labels:
+    {{- include "router.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "router.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "router.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: router
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8082
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            # Required — router refuses to start if absent or empty
+            - name: MODEL_MATRIX_PATH
+              value: {{ .Values.env.MODEL_MATRIX_PATH | quote }}
+            - name: TASK_RULES_PATH
+              value: {{ .Values.env.TASK_RULES_PATH | quote }}
+            - name: AUDIT_STORE_URL
+              value: {{ .Values.env.AUDIT_STORE_URL | quote }}
+            # Optional — defaults match pydantic-settings defaults in config.py
+            - name: CACHE_URL
+              value: {{ .Values.env.CACHE_URL | quote }}
+            - name: INFERENCE_ADAPTER_URL
+              value: {{ .Values.env.INFERENCE_ADAPTER_URL | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.env.LOG_LEVEL | quote }}
+            - name: INFERENCE_TIMEOUT_SECONDS
+              value: {{ .Values.env.INFERENCE_TIMEOUT_SECONDS | quote }}
+            - name: HEALTH_CHECK_TIMEOUT_SECONDS
+              value: {{ .Values.env.HEALTH_CHECK_TIMEOUT_SECONDS | quote }}
+          volumeMounts:
+            - name: router-config
+              mountPath: /config
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8082
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8082
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: router-config
+          configMap:
+            name: {{ include "router.fullname" . }}-config
+            items:
+              - key: model_matrix.yaml
+                path: model_matrix.yaml
+              - key: task_classifier_rules.yaml
+                path: task_classifier_rules.yaml
