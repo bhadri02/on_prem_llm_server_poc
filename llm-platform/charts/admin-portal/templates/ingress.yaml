@@ -5,17 +5,21 @@ metadata:
   name: {{ include "admin-portal.fullname" . }}
   labels:
     {{- include "admin-portal.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
-  ingressClassName: nginx
+  ingressClassName: {{ .Values.ingress.className }}
   rules:
     - host: {{ .Values.ingress.host }}
       http:
         paths:
-          - path: /
-            pathType: Prefix
+          - path: {{ .Values.ingress.path }}
+            pathType: {{ .Values.ingress.pathType }}
             backend:
               service:
                 name: {{ include "admin-portal.fullname" . }}
                 port:
-                  number: {{ .Values.ingress.servicePort }}
+                  number: {{ .Values.service.port }}
 {{- end }}
