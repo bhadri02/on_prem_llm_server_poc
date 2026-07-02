@@ -6,16 +6,23 @@ metadata:
   labels:
     {{- include "api-gateway.labels" . | nindent 4 }}
 spec:
-  ingressClassName: nginx
+  ingressClassName: {{ .Values.ingress.className }}
   rules:
-    - host: {{ .Values.ingress.host }}
+    - host: llm-poc.local
       http:
         paths:
-          - path: /
+          - path: /v1
             pathType: Prefix
             backend:
               service:
                 name: {{ include "api-gateway.fullname" . }}
                 port:
-                  number: {{ .Values.ingress.servicePort }}
+                  number: 8080
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "api-gateway.fullname" . }}
+                port:
+                  number: 8080
 {{- end }}

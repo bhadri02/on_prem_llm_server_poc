@@ -13,16 +13,19 @@ spec:
     - Egress
   ingress:
     - from:
-        - namespaceSelector:
+        - podSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+              app.kubernetes.io/name: ingress-nginx
   egress:
     - to:
-        - namespaceSelector:
+        - podSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+              app.kubernetes.io/name: security-layer
+      ports:
+        - protocol: TCP
+          port: 8081
     - ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
-          protocol: TCP
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

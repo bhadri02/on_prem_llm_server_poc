@@ -1,3 +1,4 @@
+{{- if .Values.observability.metrics.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -8,10 +9,8 @@ spec:
   selector:
     matchLabels:
       {{- include "api-gateway.selectorLabels" . | nindent 6 }}
-  namespaceSelector:
-    matchNames:
-      - {{ .Release.Namespace }}
   endpoints:
-    - port: metrics
-      path: /metrics
+    - path: /metrics
+      port: metrics
       interval: 30s
+{{- end }}
