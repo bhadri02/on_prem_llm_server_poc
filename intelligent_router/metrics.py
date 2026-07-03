@@ -1,69 +1,54 @@
 """
-Prometheus metric definitions for the Intelligent Router.
+Prometheus metric definitions for the Intelligent Router (Layer 3).
 
-This module is a pure definitions module — no functions, just the five
-module-level metric objects. Import this module before calling
-prometheus_client.make_asgi_app() to ensure all metrics are registered
-in the default registry.
+Provides the three mandatory platform metrics via `make_layer_metrics("router")`,
+plus two router-specific extra metrics (cache_hits_total, fallbacks_total).
 
-Metrics:
-  - requests_total   : Counter  — routing requests by outcome, task type, routing mode
-  - latency          : Histogram — end-to-end pipeline latency in seconds
-  - cache_hits_total : Counter  — cache hits by task type and model
-  - fallbacks_total  : Counter  — fallback events by task type and reason
-  - errors_total     : Counter  — errors by error code
+Mandatory metrics (via shared factory):
+  LAYER_METRICS.requests_total  — llm_router_requests_total{status, department, model}
+  LAYER_METRICS.latency_seconds — llm_router_latency_seconds{department}
+  LAYER_METRICS.errors_total    — llm_router_errors_total{error_code, department}
 
-Label value constraints (documented; not enforced at definition time):
-  outcome    ∈ {"cache_hit", "inference_success", "fallback_success", "error"}
-  reason     ∈ {"health_check_failed", "inference_error"}
-  error_code ∈ {"governance_check_failed", "all_backends_exhausted",
-                "invalid_pinned_model", "internal_error"}
+Extra router metrics (kept as separate prometheus_client objects):
+  cache_hits_total — Counter for cache hits by task type and model.
+  fallbacks_total  — Counter for fallback events by task type and reason.
+
+Backward-compatible module-level aliases:
+  requests_total   — alias for LAYER_METRICS.requests_total
+  latency          — alias for LAYER_METRICS.latency_seconds
+  errors_total     — alias for LAYER_METRICS.errors_total
+
+Validates: Requirements 2.9–2.12
 """
 
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter
+
+from shared.observability.metrics import make_layer_metrics
 
 # ---------------------------------------------------------------------------
-# 12.1 — Total routing requests by outcome, task type, and routing mode
+# Mandatory platform metrics (contract label schema)
 # ---------------------------------------------------------------------------
-requests_total = Counter(
-    "llm_router_requests_total",
-    "Total routing requests by outcome, task type, and routing mode",
-    labelnames=["outcome", "task_type", "routing_mode"],
-)
+LAYER_METRICS = make_layer_metrics("router")
+
+# Backward-compatible module-level aliases (used by conftest.py fixture)
+requests_total = LAYER_METRICS.requests_total
+latency = LAYER_METRICS.latency_seconds
+errors_total = LAYER_METRICS.errors_total
 
 # ---------------------------------------------------------------------------
-# 12.2 — End-to-end routing pipeline latency
+# Extra router-specific metrics (kept alongside LAYER_METRICS)
 # ---------------------------------------------------------------------------
-latency = Histogram(
-    "llm_router_latency_seconds",
-    "End-to-end routing pipeline latency in seconds",
-    labelnames=["task_type", "routing_mode"],
-    buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 15.0, 30.0, 60.0, 120.0],
-)
 
-# ---------------------------------------------------------------------------
 # 12.3 — Total cache hits by task type and model
-# ---------------------------------------------------------------------------
 cache_hits_total = Counter(
     "llm_router_cache_hits_total",
     "Total cache hits by task type and model",
     labelnames=["task_type", "model"],
 )
 
-# ---------------------------------------------------------------------------
 # 12.4 — Total fallback events by task type and reason
-# ---------------------------------------------------------------------------
 fallbacks_total = Counter(
     "llm_router_fallbacks_total",
     "Total fallback events by task type and reason",
     labelnames=["task_type", "reason"],
-)
-
-# ---------------------------------------------------------------------------
-# 12.5 — Total errors by error code
-# ---------------------------------------------------------------------------
-errors_total = Counter(
-    "llm_router_errors_total",
-    "Total errors by error code",
-    labelnames=["error_code"],
 )

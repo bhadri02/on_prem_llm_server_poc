@@ -115,7 +115,7 @@ async def post_check(
         )
 
         # Observe latency and emit INFO log on degraded path.
-        metrics.latency.labels(endpoint="post_check").observe(
+        metrics.LAYER_METRICS.latency_seconds.labels(department="unknown").observe(
             time.monotonic() - t0
         )
         logger.info(
@@ -161,8 +161,11 @@ async def post_check(
     # ------------------------------------------------------------------
     # 16.4  Metrics, logging, and response
     # ------------------------------------------------------------------
-    # Observe handler latency.
-    metrics.latency.labels(endpoint="post_check").observe(time.monotonic() - t0)
+    # Observe handler latency using contract-label schema.
+    _department = enriched_imf.get("user", {}).get("department") or "unknown"
+    metrics.LAYER_METRICS.latency_seconds.labels(department=_department).observe(
+        time.monotonic() - t0
+    )
 
     # Increment PII entity counter once per detected entity type.
     # Entity types outside the known set use the "OTHER" label.

@@ -28,6 +28,21 @@ from security_layer.routers.health import router as health_router
 from security_layer.routers.post_check import router as post_check_router
 from security_layer.routers.pre_check import router as pre_check_router
 
+# ---------------------------------------------------------------------------
+# Configure shared observability logging at module level (Requirements 6.1–6.6)
+# ---------------------------------------------------------------------------
+from shared.observability.logging import configure_structlog
+
+configure_structlog("security", settings.log_level)
+
+# ---------------------------------------------------------------------------
+# Configure distributed tracing (opt-in, disabled by default for POC).
+# ---------------------------------------------------------------------------
+from shared.observability.middleware import configure_tracing
+
+if settings.tracing_enabled:
+    configure_tracing("security", settings.otel_endpoint)
+
 logger = get_logger(__name__)
 
 

@@ -48,3 +48,4 @@ observability:
   metrics:
     enabled: true
     port: 9090
+    scrapeInterval: "15s"

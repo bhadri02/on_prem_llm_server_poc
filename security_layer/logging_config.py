@@ -3,6 +3,11 @@ logging_config.py — Structured JSON logger for the Security & Governance Layer
 
 Provides a JSONFormatter that emits single-line JSON log records and a
 get_logger() factory that wires it up to stdout with the configured log level.
+
+Note: `configure_structlog("security", ...)` is called in main.py at module
+level to ensure the shared structlog is available globally (Requirements 6.1–6.6).
+This module keeps its own JSONFormatter/get_logger for backward compatibility
+with existing call-sites and tests.
 """
 
 import datetime

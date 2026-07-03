@@ -126,6 +126,11 @@ autoscaling:
 vault:
   enabled: false
 
+observability:
+  metrics:
+    enabled: true
+    scrapeInterval: "15s"
+
 # ---------------------------------------------------------------------------
 # Init Job — pulls models into the Model_Store before Ollama is Ready
 # ---------------------------------------------------------------------------

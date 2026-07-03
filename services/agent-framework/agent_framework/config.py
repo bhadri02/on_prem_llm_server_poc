@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     metrics_port: int = 9090                 # METRICS_PORT
     agent_sub_call_timeout_seconds: float = 30.0  # per-LLM-call timeout to Router
 
+    # ── Distributed tracing (opt-in, disabled by default for POC) ──────────
+    tracing_enabled: bool = False   # TRACING_ENABLED
+    otel_endpoint: str = "http://otel-collector:4317"  # OTEL_ENDPOINT
+
 
 # Module-level singleton — import this directly from other modules:
 #   from agent_framework.config import settings

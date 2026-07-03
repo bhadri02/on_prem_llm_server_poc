@@ -13,6 +13,10 @@ spec:
       port: 16686
       targetPort: 16686
       protocol: TCP
+    - name: grpc-collector
+      port: 14250
+      targetPort: 14250
+      protocol: TCP
     - name: compact
       port: 6831
       targetPort: 6831

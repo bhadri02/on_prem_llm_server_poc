@@ -43,6 +43,22 @@ from cache_service.services.embedding import EmbeddingGenerator
 from cache_service.services.exact_cache import ExactCacheService
 from cache_service.services.semantic_cache import SemanticCacheService
 
+# ---------------------------------------------------------------------------
+# Configure shared observability logging at module level (Requirements 6.1–6.6)
+# ---------------------------------------------------------------------------
+from shared.observability.logging import configure_structlog
+
+_settings_for_log = get_settings()
+configure_structlog("cache", _settings_for_log.log_level)
+
+# ---------------------------------------------------------------------------
+# Configure distributed tracing (opt-in, disabled by default for POC).
+# ---------------------------------------------------------------------------
+from shared.observability.middleware import configure_tracing
+
+if _settings_for_log.tracing_enabled:
+    configure_tracing("cache", _settings_for_log.otel_endpoint)
+
 
 # ---------------------------------------------------------------------------
 # Structured log helper

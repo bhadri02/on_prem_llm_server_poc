@@ -130,13 +130,17 @@ async def pre_check(
     # ------------------------------------------------------------------
     # 15.3  Blocked response
     # ------------------------------------------------------------------
+    # Extract department/model for contract-label metrics (fallback: "unknown")
+    _department = imf.get("user", {}).get("department") or "unknown"
+    _model = imf.get("routing", {}).get("selected_model") or "unknown"
+
     if result.blocked:
         metrics.blocks_total.labels(reason=result.block_reason).inc()
-        metrics.requests_total.labels(
-            outcome="block", check=result.block_reason
-        ).inc()
-        metrics.latency.labels(endpoint="pre_check").observe(
-            time.monotonic() - t0
+        metrics.LAYER_METRICS.record_request(
+            status="blocked",
+            department=_department,
+            model=_model,
+            latency_s=time.monotonic() - t0,
         )
         raise HTTPException(
             status_code=result.block_status,
@@ -155,15 +159,20 @@ async def pre_check(
             state.settings.downstream_router_url,
             request_id,
         )
-        metrics.requests_total.labels(outcome="pass", check="full_pipeline").inc()
-        metrics.latency.labels(endpoint="pre_check").observe(
-            time.monotonic() - t0
+        metrics.LAYER_METRICS.record_request(
+            status="success",
+            department=_department,
+            model=_model,
+            latency_s=time.monotonic() - t0,
         )
         return JSONResponse(status_code=status, content=router_body)
 
     except RouterTimeoutError:
-        metrics.latency.labels(endpoint="pre_check").observe(
-            time.monotonic() - t0
+        metrics.LAYER_METRICS.record_request(
+            status="error",
+            department=_department,
+            model=_model,
+            latency_s=time.monotonic() - t0,
         )
         return JSONResponse(
             status_code=504,
@@ -171,8 +180,11 @@ async def pre_check(
         )
 
     except RouterUnavailableError:
-        metrics.latency.labels(endpoint="pre_check").observe(
-            time.monotonic() - t0
+        metrics.LAYER_METRICS.record_request(
+            status="error",
+            department=_department,
+            model=_model,
+            latency_s=time.monotonic() - t0,
         )
         return JSONResponse(
             status_code=502,
@@ -180,8 +192,11 @@ async def pre_check(
         )
 
     except RouterInvalidResponseError:
-        metrics.latency.labels(endpoint="pre_check").observe(
-            time.monotonic() - t0
+        metrics.LAYER_METRICS.record_request(
+            status="error",
+            department=_department,
+            model=_model,
+            latency_s=time.monotonic() - t0,
         )
         return JSONResponse(
             status_code=502,

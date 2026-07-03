@@ -33,6 +33,24 @@ from intelligent_router.routers.openai_compat import openai_router
 from intelligent_router.routers.route import route_router
 from intelligent_router.task_classifier import load_classifier_rules
 
+# ---------------------------------------------------------------------------
+# Configure shared observability logging at module level (Requirements 6.1–6.6)
+# ---------------------------------------------------------------------------
+from shared.observability.logging import configure_structlog
+
+if settings is not None:
+    configure_structlog("router", settings.log_level)
+else:
+    configure_structlog("router", "INFO")
+
+# ---------------------------------------------------------------------------
+# Configure distributed tracing (opt-in, disabled by default for POC).
+# ---------------------------------------------------------------------------
+from shared.observability.middleware import configure_tracing
+
+if settings is not None and settings.tracing_enabled:
+    configure_tracing("router", settings.otel_endpoint)
+
 logger = get_logger(__name__)
 
 

@@ -1,52 +1,44 @@
 """
 Prometheus metrics for the Cache Service (Layer 4).
 
-All four metric objects are defined here and imported by the cache router.
-A dedicated metrics ASGI app is mounted on port 9090 by main.py (Task 12).
+Provides the three mandatory platform metrics via `make_layer_metrics("cache")`,
+plus one cache-specific extra metric (llm_cache_semantic_entries).
+
+The `cache` layer's `requests_total` metric has an additional `outcome` label
+(`hit`|`miss`) on top of the contract schema — `make_layer_metrics("cache")`
+handles this special case internally and registers the metric as:
+  llm_cache_requests_total{status, department, model, outcome}
+
+Mandatory metrics (via shared factory):
+  LAYER_METRICS.requests_total  — llm_cache_requests_total{status, department, model, outcome}
+  LAYER_METRICS.latency_seconds — llm_cache_latency_seconds{department}
+  LAYER_METRICS.errors_total    — llm_cache_errors_total{error_code, department}
+
+Extra cache metric (kept as separate prometheus_client object):
+  llm_cache_semantic_entries — Gauge tracking current semantic cache list length per task_type.
+
+When calling LAYER_METRICS.record_request(), pass the `outcome` kwarg:
+  LAYER_METRICS.record_request(status=..., department=..., model=..., latency_s=..., outcome="hit"|"miss")
 
 Validates: Requirements 9.1, 9.2, 9.3, 9.4, 9.5
 """
 
 from __future__ import annotations
 
-from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client import Gauge
+
+from shared.observability.metrics import make_layer_metrics
 
 # ---------------------------------------------------------------------------
-# Metric: total lookup requests
-# Labels: status (hit | miss), cache_type (exact | semantic | none), task_type
+# Mandatory platform metrics (contract label schema + cache-specific `outcome`)
 # ---------------------------------------------------------------------------
-llm_cache_requests_total = Counter(
-    "llm_cache_requests_total",
-    "Total number of cache lookup requests.",
-    ["status", "cache_type", "task_type"],
-)
+LAYER_METRICS = make_layer_metrics("cache")
 
 # ---------------------------------------------------------------------------
-# Metric: end-to-end handler latency
-# Labels: operation (lookup | write), task_type
-# Buckets: per design doc
+# Extra cache-specific metric (kept alongside LAYER_METRICS)
 # ---------------------------------------------------------------------------
-llm_cache_latency_seconds = Histogram(
-    "llm_cache_latency_seconds",
-    "End-to-end cache handler latency in seconds.",
-    ["operation", "task_type"],
-    buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5],
-)
 
-# ---------------------------------------------------------------------------
-# Metric: Redis / embedding error counter
-# Labels: error_code, operation
-# ---------------------------------------------------------------------------
-llm_cache_errors_total = Counter(
-    "llm_cache_errors_total",
-    "Total number of cache errors (Redis or embedding failures).",
-    ["error_code", "operation"],
-)
-
-# ---------------------------------------------------------------------------
-# Metric: current semantic cache list length per task_type
-# Labels: task_type
-# ---------------------------------------------------------------------------
+# 9.5 — Current semantic cache list length per task_type (Gauge)
 llm_cache_semantic_entries = Gauge(
     "llm_cache_semantic_entries",
     "Current number of entries in the semantic cache list per task_type.",

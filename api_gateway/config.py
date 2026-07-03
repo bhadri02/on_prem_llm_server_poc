@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     # env: DOWNSTREAM_TIMEOUT — default 10.0 seconds
     downstream_timeout_seconds: float = 10.0
 
+    # ── Distributed tracing (opt-in, disabled by default for POC) ──────────
+    # env: TRACING_ENABLED — set to "true" to enable OTel/Jaeger tracing
+    tracing_enabled: bool = False
+    # env: OTEL_ENDPOINT — OTLP gRPC endpoint of the OTel Collector
+    otel_endpoint: str = "http://otel-collector:4317"
+
     model_config = {
         "env_prefix": "",
         "case_sensitive": False,

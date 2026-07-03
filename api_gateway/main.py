@@ -61,6 +61,27 @@ except Exception as exc:
         pass
     sys.exit(1)
 
+# ---------------------------------------------------------------------------
+# Configure shared observability logging on startup.
+# This configures structlog globally for the api_gateway service, reading
+# the LOG_LEVEL from settings (which in turn reads the LOG_LEVEL env var).
+# ---------------------------------------------------------------------------
+from shared.observability.logging import configure_structlog
+
+configure_structlog("api_gateway", settings.log_level)
+
+# ---------------------------------------------------------------------------
+# Configure distributed tracing (opt-in, disabled by default for POC).
+# Guards the configure_tracing() call behind the TRACING_ENABLED env var
+# (default False).  When enabled, wires OTel instrumentation into FastAPI
+# and httpx so that traces span all layers.  Gracefully no-ops when
+# opentelemetry-* packages are not installed (Requirement 9.1).
+# ---------------------------------------------------------------------------
+from shared.observability.middleware import configure_tracing
+
+if settings.tracing_enabled:
+    configure_tracing("api_gateway", settings.otel_endpoint)
+
 
 # ---------------------------------------------------------------------------
 # Lifespan — manage shared httpx.AsyncClient across requests
@@ -139,24 +160,23 @@ def create_app() -> FastAPI:
     ) -> JSONResponse:
         """Handle any exception that escapes the middleware stack.
 
-        Emits a structured JSON ERROR log record to stdout containing:
-            level, request_id, exception_type, exception_message, traceback
+        Emits a structured JSON ERROR log record to stdout using shared
+        observability logging (emit), containing: request_id, exception_type.
 
         Returns HTTP 500 with the canonical error body.
         """
-        request_id: str = getattr(request.state, "request_id", None) or str(uuid.uuid4())
+        from shared.observability.logging import emit, get_logger
 
-        error_record = {
-            "level": "ERROR",
-            "request_id": request_id,
-            "exception_type": type(exc).__name__,
-            "exception_message": str(exc),
-            "traceback": tb_module.format_exc(),
-        }
-        try:
-            print(json.dumps(error_record), flush=True)
-        except Exception:
-            pass  # silently discard on stdout failure
+        request_id: str = getattr(request.state, "request_id", None) or str(uuid.uuid4())
+        logger = get_logger(request_id)
+
+        emit(
+            logger,
+            level="ERROR",
+            event="unhandled_exception",
+            message=f"Unhandled exception: {type(exc).__name__}",
+            exception_type=type(exc).__name__,
+        )
 
         return JSONResponse(
             status_code=500,

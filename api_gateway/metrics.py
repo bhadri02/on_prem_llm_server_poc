@@ -1,52 +1,28 @@
 """
 Prometheus metrics definitions for the API Gateway (Layer 1).
 
-All metric objects are registered at module import time.
-This module has no I/O and is safe to import anywhere.
+All metric objects are registered at module import time via the shared
+observability module. This module has no I/O and is safe to import anywhere.
 
-PrometheusMiddleware (middleware/prometheus.py) increments these on every
-completed request, labelled by status_code, path, and error_code.
+PrometheusMiddleware (middleware/prometheus.py) records metrics using the
+LayerMetrics interface.
 
 Metric names follow the platform convention: llm_api_gateway_<metric>.
 
-Validates: Requirements 10.1, 10.2, 10.3, 10.4
+Validates: Requirements 2.1, 2.2, 2.3, 2.19, 2.20
 """
 
 from __future__ import annotations
 
-from prometheus_client import Counter, Histogram
+from shared.observability.metrics import make_layer_metrics
 
 # ---------------------------------------------------------------------------
-# Metric: total completed requests (excluding /metrics and /health)
-# Labels:
-#   status_code — HTTP status code string, e.g. "200", "401", "429", "502"
-#   path        — route template, e.g. "/v1/chat/completions" (not raw URL)
+# Create the three mandatory metric families for the api_gateway layer.
+# 
+# This replaces the ad-hoc Counter and Histogram definitions with a single
+# factory call that enforces the contract label schema:
+#   - requests_total: labels [status, department, model]
+#   - latency_seconds: label [department], buckets [0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0]
+#   - errors_total: labels [error_code, department]
 # ---------------------------------------------------------------------------
-REQUESTS_TOTAL = Counter(
-    "llm_api_gateway_requests_total",
-    "Total completed requests handled by the API Gateway",
-    ["status_code", "path"],
-)
-
-# ---------------------------------------------------------------------------
-# Metric: total error responses (4xx and 5xx, excluding /metrics and /health)
-# Labels:
-#   error_code  — HTTP status code string, e.g. "401", "429", "502", "500"
-# ---------------------------------------------------------------------------
-ERRORS_TOTAL = Counter(
-    "llm_api_gateway_errors_total",
-    "Total error responses (4xx and 5xx) returned by the API Gateway",
-    ["error_code"],
-)
-
-# ---------------------------------------------------------------------------
-# Metric: end-to-end request latency
-# Labels:
-#   path        — route template, e.g. "/v1/chat/completions" (not raw URL)
-# Buckets: default prometheus_client buckets for POC
-# ---------------------------------------------------------------------------
-LATENCY_SECONDS = Histogram(
-    "llm_api_gateway_latency_seconds",
-    "End-to-end request latency from first byte received to last byte sent",
-    ["path"],
-)
+LAYER_METRICS = make_layer_metrics("api_gateway")

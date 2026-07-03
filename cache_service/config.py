@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     ttl_code: int = Field(7200, gt=0)
     ttl_summarization: int = Field(86400, gt=0)
 
+    # ── Distributed tracing (opt-in, disabled by default for POC) ──────────
+    tracing_enabled: bool = False   # TRACING_ENABLED
+    otel_endpoint: str = "http://otel-collector:4317"  # OTEL_ENDPOINT
+
     model_config = {
         "env_prefix": "",       # reads REDIS_URL, SIMILARITY_THRESHOLD, etc. directly
         "case_sensitive": False,

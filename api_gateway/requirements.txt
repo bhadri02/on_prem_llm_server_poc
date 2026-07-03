@@ -17,5 +17,8 @@ pydantic-settings==2.2.1
 # Prometheus metrics exposition
 prometheus-client==0.20.0
 
+# Structured logging (shared observability module dependency)
+structlog==24.4.0
+
 # Property-based testing (unit + integration tests)
 hypothesis==6.100.0

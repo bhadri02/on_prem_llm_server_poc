@@ -79,19 +79,22 @@ async def post_route(
 
         task_type = result.imf.get("request", {}).get("task_type", "unknown")
         routing_mode = result.imf.get("routing", {}).get("routing_mode", "unknown")
+        department = result.imf.get("user", {}).get("department") or "unknown"
+        model = result.imf.get("routing", {}).get("selected_model") or "unknown"
 
-        # 12.2 — increment requests counter
-        metrics.requests_total.labels(
-            outcome=outcome,
-            task_type=task_type,
-            routing_mode=routing_mode,
-        ).inc()
+        # Record request using contract-label schema (Req 2.19, 2.20)
+        metrics.LAYER_METRICS.record_request(
+            status="success",
+            department=department,
+            model=model,
+            latency_s=result.latency_ms / 1000,
+        )
 
-        # 12.3 — observe latency in seconds
-        metrics.latency.labels(
-            task_type=task_type,
-            routing_mode=routing_mode,
-        ).observe(result.latency_ms / 1000)
+        # Track cache hits and fallbacks via extra router metrics
+        if outcome == "cache_hit":
+            metrics.cache_hits_total.labels(task_type=task_type, model=model).inc()
+        elif outcome == "fallback_success":
+            metrics.fallbacks_total.labels(task_type=task_type, reason="fallback").inc()
 
         # Structured routing_decision log entry (Req 13.2)
         logger.info(
@@ -117,9 +120,19 @@ async def post_route(
     # ------------------------------------------------------------------
     error_code = result.error_code or "internal_error"
 
-    # 12.6 — increment errors counter only for recognised error codes
+    # Increment errors counter only for recognised error codes
     if error_code in _TRACKED_ERROR_CODES:
-        metrics.errors_total.labels(error_code=error_code).inc()
+        department = result.imf.get("user", {}).get("department") or "unknown"
+        metrics.LAYER_METRICS.record_error(
+            error_code=error_code,
+            department=department,
+        )
+        metrics.LAYER_METRICS.record_request(
+            status="error",
+            department=department,
+            model=result.imf.get("routing", {}).get("selected_model") or "unknown",
+            latency_s=result.latency_ms / 1000,
+        )
 
     # Build the base error body
     error_body: dict = {

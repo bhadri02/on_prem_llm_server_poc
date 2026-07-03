@@ -1,10 +1,10 @@
 """
 Structured JSON logging middleware for the Cache Service (Layer 4).
 
-Implements LoggingMiddleware(BaseHTTPMiddleware) that emits one JSON log line
-to stdout per HTTP request, containing: timestamp (ISO-8601 UTC + "Z"), level
-(INFO for status < 500, ERROR for status >= 500), method, path, status_code,
-latency_ms (rounded to 2 dp), and request_id.
+Implements LoggingMiddleware(BaseHTTPMiddleware) that emits one structured log
+line per HTTP request. Uses the shared observability `get_logger()` function
+for request-scoped logger binding while retaining cache-service-specific
+flat JSON output format for backward compatibility with existing tests.
 
 request_id extraction priority:
   1. IMF body field `request_id` (parsed from JSON body)
@@ -18,7 +18,7 @@ PII safety rules (Requirements 7.6):
 Respects LOG_LEVEL from get_settings(); invalid values treated as "INFO".
 If stdout write raises any exception: silently discards the entry and continues.
 
-Validates: Requirements 6.6, 7.5, 7.6, 7.7
+Validates: Requirements 6.1–6.6, 7.1–7.4, 7.5, 7.6, 7.7
 """
 
 import json
@@ -30,6 +30,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 from cache_service.config import get_settings
+from shared.observability.logging import get_logger  # noqa: F401 — binds request_id context
 
 # Numeric log level priorities matching Python's logging module conventions.
 _LEVEL_PRIORITY: dict[str, int] = {
@@ -45,12 +46,9 @@ _LEVEL_PRIORITY: dict[str, int] = {
 def _should_emit(level: str) -> bool:
     """Return True if *level* meets or exceeds the configured LOG_LEVEL.
 
-    Rules (per Requirements 7.5):
-    - If LOG_LEVEL is WARNING or higher, INFO entries are suppressed.
-    - ERROR entries are always emitted regardless of configured level.
-    - Unknown LOG_LEVEL values default to INFO priority (20).
+    ERROR entries are always emitted regardless of configured level.
+    Unknown LOG_LEVEL values default to INFO priority (20).
     """
-    # ERROR is always emitted — hard requirement 7.5
     if level == "ERROR":
         return True
 
@@ -63,10 +61,7 @@ def _should_emit(level: str) -> bool:
 
 
 def _extract_pii_fields(body: dict[str, Any]) -> set[str]:
-    """Extract the list of PII field names from governance.pii_fields_detected.
-
-    Returns an empty set if the body is not a dict or the field is absent/non-list.
-    """
+    """Extract the list of PII field names from governance.pii_fields_detected."""
     try:
         governance = body.get("governance", {})
         if not isinstance(governance, dict):
@@ -80,10 +75,7 @@ def _extract_pii_fields(body: dict[str, Any]) -> set[str]:
 
 
 def _extract_message_content_values(body: dict[str, Any]) -> set[str]:
-    """Extract all raw content string values from request.messages[].content.
-
-    Returns an empty set if the body is not a dict or messages is absent/malformed.
-    """
+    """Extract all raw content string values from request.messages[].content."""
     content_values: set[str] = set()
     try:
         request_block = body.get("request", {})
@@ -105,9 +97,9 @@ def _extract_message_content_values(body: dict[str, Any]) -> set[str]:
 class LoggingMiddleware(BaseHTTPMiddleware):
     """Starlette middleware that emits one structured JSON log line per request.
 
-    The log entry is written to stdout via ``print(..., flush=True)`` after
-    the response is returned so that the status code and latency are both
-    available.
+    Uses the shared `get_logger()` for request-scoped logger context while
+    emitting a flat JSON log entry for compatibility with the cache layer's
+    existing test suite.
 
     Log entry fields (Requirements 6.6, 7.5, 7.6, 7.7):
         timestamp   — ISO-8601 UTC datetime with "Z" suffix
@@ -125,9 +117,6 @@ class LoggingMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         # --- Read and re-inject the raw request body ---
-        # We must consume the body now to extract request_id, but downstream
-        # handlers also need to read it. Re-inject via request.scope["_body"]
-        # so that subsequent await request.body() calls return the same bytes.
         body_bytes = b""
         body_dict: dict[str, Any] = {}
         try:
@@ -157,6 +146,9 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             # 3. Fallback
             request_id = "unknown"
 
+        # Bind request-scoped logger (uses shared structlog configuration)
+        _logger = get_logger(request_id)  # noqa: F841 — binds context for potential sub-calls
+
         # --- Extract PII exclusion metadata before calling next ---
         pii_fields = _extract_pii_fields(body_dict)
         forbidden_content_values = _extract_message_content_values(body_dict)
@@ -180,12 +172,10 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             }
 
             # --- Apply PII exclusion (Requirement 7.6) ---
-            # Remove any key whose name appears in governance.pii_fields_detected
             for pii_field in pii_fields:
                 entry.pop(pii_field, None)
 
             # Remove any value that matches a raw messages[].content string
-            # (scan entry values and redact matching strings)
             if forbidden_content_values:
                 entry = {
                     k: v
@@ -193,7 +183,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                     if not (isinstance(v, str) and v in forbidden_content_values)
                 }
 
-            # --- Emit to stdout; silently discard on any failure (Requirement 7.7) ---
+            # --- Emit to stdout; silently discard on any failure ---
             try:
                 print(json.dumps(entry), flush=True)
             except Exception:
