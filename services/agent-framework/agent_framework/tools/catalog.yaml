@@ -1,0 +1,21 @@
+tools:
+  - name: "calculator"
+    description: "Evaluate a mathematical expression using safe arithmetic operators only."
+    parameters:
+      expression:
+        type: string
+        required: true
+        description: "A mathematical expression, e.g. '2 + 2 * 10' or '(3.14 * 5) ** 2'"
+
+  - name: "get_current_time"
+    description: "Get the current UTC date and time in ISO-8601 format."
+    parameters: {}
+
+  - name: "web_search"
+    description: "Search for information on a topic (simulated for POC)."
+    parameters:
+      query:
+        type: string
+        required: true
+        max_length: 1000
+        description: "The search query string."
