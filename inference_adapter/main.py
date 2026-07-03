@@ -47,6 +47,22 @@ from inference_adapter.routers.health import health_router
 from inference_adapter.routers.infer import infer_router
 from inference_adapter.services.ollama_client import OllamaError
 
+# ---------------------------------------------------------------------------
+# Configure shared observability logging at module level (Requirements 6.1–6.6)
+# ---------------------------------------------------------------------------
+from shared.observability.logging import configure_structlog
+
+_settings_for_log = get_settings()
+configure_structlog("inference", _settings_for_log.log_level)
+
+# ---------------------------------------------------------------------------
+# Configure distributed tracing (opt-in, disabled by default for POC).
+# ---------------------------------------------------------------------------
+from shared.observability.middleware import configure_tracing
+
+if _settings_for_log.tracing_enabled:
+    configure_tracing("inference", _settings_for_log.otel_endpoint)
+
 
 # ---------------------------------------------------------------------------
 # Structured log helper

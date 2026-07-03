@@ -168,8 +168,18 @@ async def run_agent_session(
                 int((time.monotonic() - t0) * 1000),
                 "error",
             )
-            metrics.sessions_total.labels(outcome="error").inc()
-            metrics.errors_total.labels(error_code="502").inc()
+            _department = imf.get("user", {}).get("department") or "unknown"
+            _model = "unknown"  # agent doesn't pin a model
+            metrics.LAYER_METRICS.record_request(
+                status="error",
+                department=_department,
+                model=_model,
+                latency_s=time.monotonic() - t0,
+            )
+            metrics.LAYER_METRICS.record_error(
+                error_code="502",
+                department=_department,
+            )
             return output_imf, 502
         # Unhandled internal error → let it propagate to the 500 handler
         raise
@@ -198,8 +208,16 @@ async def run_agent_session(
         request_id, session_id, step_count, tools_called, latency_ms, outcome
     )
 
-    metrics.sessions_total.labels(outcome=outcome).inc()
-    metrics.session_latency.observe(time.monotonic() - t0)
+    _department = imf.get("user", {}).get("department") or "unknown"
+    _model = "unknown"  # agent layer doesn't pin a specific model
+    _status = "error" if outcome == "error" else "success"
+    metrics.LAYER_METRICS.record_request(
+        status=_status,
+        department=_department,
+        model=_model,
+        latency_s=time.monotonic() - t0,
+    )
+    metrics.session_latency.labels(department=_department).observe(time.monotonic() - t0)
 
     # 10. Emit structured session completion log
     logger.info(

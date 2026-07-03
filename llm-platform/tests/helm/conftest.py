@@ -12,6 +12,24 @@ from typing import Any
 
 import pytest
 import yaml
+from hypothesis import HealthCheck, settings
+
+
+# ---------------------------------------------------------------------------
+# Hypothesis settings profiles
+# ---------------------------------------------------------------------------
+
+# "ci" profile: used in CI pipelines and as the default for this test suite.
+# Runs enough examples to catch regressions without blowing the time budget.
+settings.register_profile(
+    "ci",
+    max_examples=100,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+
+# Load the ci profile as the active default for all tests in this package.
+settings.load_profile("ci")
 
 
 # ---------------------------------------------------------------------------

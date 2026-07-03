@@ -5,12 +5,16 @@ metadata:
   name: {{ include "api-gateway.fullname" . }}
   labels:
     {{- include "api-gateway.labels" . | nindent 4 }}
+    release: observability
 spec:
   selector:
     matchLabels:
       {{- include "api-gateway.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
   endpoints:
     - path: /metrics
       port: metrics
-      interval: 30s
+      interval: {{ .Values.observability.metrics.scrapeInterval | default "15s" }}
 {{- end }}

@@ -1,40 +1,41 @@
 """
 metrics.py — Prometheus metric definitions for the Security & Governance Layer.
 
-Defines four module-level metrics that are registered in the default Prometheus
-registry at import time:
+Defines the three mandatory platform metrics via `make_layer_metrics("security")`,
+plus two security-specific extra metrics (pii_entities_total, blocks_total).
 
-- ``requests_total``    — Counter tracking pre-generation pipeline requests by
-                          outcome and terminating check stage.
-- ``latency``           — Histogram tracking handler latency for pre_check and
-                          post_check endpoints.
-- ``pii_entities_total`` — Counter tracking PII entities detected by entity type.
-- ``blocks_total``      — Counter tracking blocked requests by block reason.
+Mandatory metrics (via shared factory):
+  LAYER_METRICS.requests_total  — llm_security_requests_total{status, department, model}
+  LAYER_METRICS.latency_seconds — llm_security_latency_seconds{department}
+  LAYER_METRICS.errors_total    — llm_security_errors_total{error_code, department}
 
-This module is imported by ``metrics_app.py`` (to ensure registration before
-``make_asgi_app()`` is called) and by the route handlers in
-``routers/pre_check.py`` and ``routers/post_check.py``.
+Extra security metrics (kept as separate prometheus_client objects):
+  pii_entities_total — Counter tracking PII entities detected by entity type.
+  blocks_total       — Counter tracking blocked requests by block reason.
+
+This module is imported by routers/pre_check.py and routers/post_check.py.
+
+Validates: Requirements 2.4–2.8, 6.1–6.6, 7.1–7.4
 """
 
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter
 
-# Total pre-generation pipeline requests, labelled by:
-#   outcome ∈ {pass, block, error}
-#   check   ∈ {injection, content_safety, policy, full_pipeline}
-requests_total = Counter(
-    "llm_security_requests_total",
-    "Total pre-generation pipeline requests by outcome and terminating check",
-    labelnames=["outcome", "check"],
-)
+from shared.observability.metrics import make_layer_metrics
 
-# Handler latency from entry to response return, labelled by:
-#   endpoint ∈ {pre_check, post_check}
-latency = Histogram(
-    "llm_security_latency_seconds",
-    "Handler latency from entry to response return",
-    labelnames=["endpoint"],
-    buckets=[0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0],
-)
+# ---------------------------------------------------------------------------
+# Mandatory platform metrics (contract label schema)
+# ---------------------------------------------------------------------------
+LAYER_METRICS = make_layer_metrics("security")
+
+# Expose the three mandatory objects at module level for backward-compatible
+# use in route handlers and tests that call the old `requests_total` / `latency` names.
+requests_total = LAYER_METRICS.requests_total
+latency = LAYER_METRICS.latency_seconds
+errors_total = LAYER_METRICS.errors_total
+
+# ---------------------------------------------------------------------------
+# Extra security-specific metrics (kept alongside LAYER_METRICS)
+# ---------------------------------------------------------------------------
 
 # Count of PII entities detected, labelled by:
 #   entity_type ∈ {EMAIL_ADDRESS, PHONE_NUMBER, PERSON, OTHER}

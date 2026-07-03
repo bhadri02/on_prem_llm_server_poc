@@ -1,9 +1,11 @@
+{{- if .Values.observability.metrics.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: {{ include "router.fullname" . }}
   labels:
     {{- include "router.labels" . | nindent 4 }}
+    release: observability
 spec:
   selector:
     matchLabels:
@@ -14,4 +16,5 @@ spec:
   endpoints:
     - port: metrics
       path: /metrics
-      interval: 30s
+      interval: {{ .Values.observability.metrics.scrapeInterval | default "15s" }}
+{{- end }}

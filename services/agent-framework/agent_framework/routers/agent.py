@@ -47,7 +47,7 @@ async def agent_run(
 
     # Validate the agentic flag (Req 1.3)
     if not imf.get("extensions", {}).get("agentic"):
-        metrics.errors_total.labels(error_code="400").inc()
+        metrics.LAYER_METRICS.record_error(error_code="400", department="unknown")
         return JSONResponse(
             status_code=400,
             content={
@@ -70,7 +70,8 @@ async def agent_run(
             session_store=session_store,
         )
         if status_code >= 400:
-            metrics.errors_total.labels(error_code=str(status_code)).inc()
+            _dep = imf.get("user", {}).get("department") or "unknown"
+            metrics.LAYER_METRICS.record_error(error_code=str(status_code), department=_dep)
 
         # Emit completion audit event as a background task so the response
         # is not blocked (fire-and-forget per design).
@@ -106,7 +107,7 @@ async def agent_run(
             },
         )
 
-        metrics.errors_total.labels(error_code="500").inc()
+        metrics.LAYER_METRICS.record_error(error_code="500", department="unknown")
 
         # Build a partial IMF with finish_reason=null (Req 1.8)
         partial_imf = dict(imf)

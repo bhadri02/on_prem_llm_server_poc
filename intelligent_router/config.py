@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     health_check_timeout_seconds: int = 5                          # HEALTH_CHECK_TIMEOUT_SECONDS
     port: int = 8082                                               # PORT
 
+    # ── Distributed tracing (opt-in, disabled by default for POC) ──────────
+    tracing_enabled: bool = False   # TRACING_ENABLED
+    otel_endpoint: str = "http://otel-collector:4317"  # OTEL_ENDPOINT
+
 
 # Module-level singleton — import this directly from other modules:
 #   from intelligent_router.config import settings

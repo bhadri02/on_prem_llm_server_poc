@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # Prometheus metrics port — env: METRICS_PORT; int in [1, 65535]; ValidationError causes startup failure
     metrics_port: int = Field(9090, ge=1, le=65535)
 
+    # ── Distributed tracing (opt-in, disabled by default for POC) ──────────
+    tracing_enabled: bool = False   # TRACING_ENABLED
+    otel_endpoint: str = "http://otel-collector:4317"  # OTEL_ENDPOINT
+
     model_config = {
         "env_prefix": "",       # reads OLLAMA_BASE_URL, DEFAULT_MODEL, etc. directly
         "case_sensitive": False,

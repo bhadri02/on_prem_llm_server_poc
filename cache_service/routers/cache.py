@@ -29,9 +29,7 @@ from fastapi.responses import JSONResponse
 from cache_service.config import get_settings
 from cache_service.exceptions import EmbeddingEncodeError, RedisUnavailableError
 from cache_service.metrics import (
-    llm_cache_errors_total,
-    llm_cache_latency_seconds,
-    llm_cache_requests_total,
+    LAYER_METRICS,
     llm_cache_semantic_entries,
 )
 from cache_service.schemas.cache import CacheBlock, LookupResponse, WriteResponse
@@ -139,10 +137,19 @@ async def lookup(imf: IMFDocument, request: Request) -> Any:
         latency_ms = int(latency_s * 1000)
         status = "hit" if hit else "miss"
         ct_label = cache_type_val if cache_type_val else "none"
-        llm_cache_requests_total.labels(
-            status=status, cache_type=ct_label, task_type=task_type
-        ).inc()
-        llm_cache_latency_seconds.labels(operation="lookup", task_type=task_type).observe(latency_s)
+
+        # Extract contract labels from IMF (fallback: "unknown")
+        _department = imf.user.department or "unknown" if hasattr(imf, "user") and imf.user else "unknown"
+        _model = imf.routing.selected_model or "unknown" if hasattr(imf, "routing") and imf.routing else "unknown"
+
+        # Record via shared LAYER_METRICS (cache layer passes `outcome` kwarg)
+        LAYER_METRICS.record_request(
+            status="success",
+            department=_department,
+            model=_model,
+            latency_s=latency_s,
+            outcome=status,  # "hit" or "miss"
+        )
 
         if hit:
             _log(
@@ -175,9 +182,10 @@ async def lookup(imf: IMFDocument, request: Request) -> Any:
             exact_hit = await exact_cache.get(cache_key)
         except RedisUnavailableError:
             # Redis unavailable before any hit — return miss (Req 1.8)
-            llm_cache_errors_total.labels(
-                error_code="redis_unavailable", operation="lookup"
-            ).inc()
+            LAYER_METRICS.record_error(
+                error_code="redis_unavailable",
+                department="unknown",
+            )
             _log(
                 {
                     "event": "redis_unavailable",
@@ -210,9 +218,10 @@ async def lookup(imf: IMFDocument, request: Request) -> Any:
             query_embedding = embedding_generator.encode(prompt_text)
         except EmbeddingEncodeError:
             # Embedding failure during lookup — return miss (Req 1.9)
-            llm_cache_errors_total.labels(
-                error_code="embedding_error", operation="lookup"
-            ).inc()
+            LAYER_METRICS.record_error(
+                error_code="embedding_error",
+                department="unknown",
+            )
             _log(
                 {
                     "event": "embedding_error",
@@ -237,9 +246,10 @@ async def lookup(imf: IMFDocument, request: Request) -> Any:
             semantic_result = await semantic_cache.lookup(task_type, query_embedding)
         except RedisUnavailableError:
             # Redis failure during semantic phase — treat as miss
-            llm_cache_errors_total.labels(
-                error_code="redis_unavailable", operation="lookup"
-            ).inc()
+            LAYER_METRICS.record_error(
+                error_code="redis_unavailable",
+                department="unknown",
+            )
             _log(
                 {
                     "event": "redis_unavailable",
@@ -344,9 +354,11 @@ async def write(imf: IMFDocument, request: Request) -> Any:
         except RedisUnavailableError:
             # Redis unavailable on write → 503 (Req 2.8)
             latency_ms = int((time.monotonic() - start_time) * 1000)
-            llm_cache_errors_total.labels(
-                error_code="redis_unavailable", operation="write"
-            ).inc()
+            _department = imf.user.department or "unknown" if hasattr(imf, "user") and imf.user else "unknown"
+            LAYER_METRICS.record_error(
+                error_code="redis_unavailable",
+                department=_department,
+            )
             _log(
                 {
                     "event": "redis_unavailable",
@@ -384,9 +396,11 @@ async def write(imf: IMFDocument, request: Request) -> Any:
                     "task_type": task_type,
                 }
             )
-            llm_cache_errors_total.labels(
-                error_code="embedding_error", operation="write"
-            ).inc()
+            _department = imf.user.department or "unknown" if hasattr(imf, "user") and imf.user else "unknown"
+            LAYER_METRICS.record_error(
+                error_code="embedding_error",
+                department=_department,
+            )
             embedding = None
 
     # ------------------------------------------------------------------
@@ -408,9 +422,11 @@ async def write(imf: IMFDocument, request: Request) -> Any:
                     "task_type": task_type,
                 }
             )
-            llm_cache_errors_total.labels(
-                error_code="redis_unavailable", operation="write"
-            ).inc()
+            _department = imf.user.department or "unknown" if hasattr(imf, "user") and imf.user else "unknown"
+            LAYER_METRICS.record_error(
+                error_code="redis_unavailable",
+                department=_department,
+            )
             written_semantic = False
         else:
             if not written_semantic:
@@ -438,7 +454,18 @@ async def write(imf: IMFDocument, request: Request) -> Any:
     latency_s = time.monotonic() - start_time
     latency_ms = int(latency_s * 1000)
 
-    llm_cache_latency_seconds.labels(operation="write", task_type=task_type).observe(latency_s)
+    _department = imf.user.department or "unknown" if hasattr(imf, "user") and imf.user else "unknown"
+    _model = imf.routing.selected_model or "unknown" if hasattr(imf, "routing") and imf.routing else "unknown"
+
+    # Record successful write using contract-label schema.
+    # For the write operation, outcome="miss" is used since it wasn't a cache hit.
+    LAYER_METRICS.record_request(
+        status="success",
+        department=_department,
+        model=_model,
+        latency_s=latency_s,
+        outcome="miss",
+    )
 
     _log(
         {

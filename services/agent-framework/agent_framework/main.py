@@ -26,6 +26,24 @@ from agent_framework.config import settings
 from agent_framework.logging_config import get_logger
 from agent_framework.tools.registry import load_tool_registry
 
+# ---------------------------------------------------------------------------
+# Configure shared observability logging at module level (Requirements 6.1–6.6)
+# ---------------------------------------------------------------------------
+from shared.observability.logging import configure_structlog
+
+if settings is not None:
+    configure_structlog("agent", settings.log_level)
+else:
+    configure_structlog("agent", "INFO")
+
+# ---------------------------------------------------------------------------
+# Configure distributed tracing (opt-in, disabled by default for POC).
+# ---------------------------------------------------------------------------
+from shared.observability.middleware import configure_tracing
+
+if settings is not None and settings.tracing_enabled:
+    configure_tracing("agent", settings.otel_endpoint)
+
 logger = get_logger(__name__)
 
 

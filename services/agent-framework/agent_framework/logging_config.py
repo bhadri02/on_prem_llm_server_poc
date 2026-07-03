@@ -15,6 +15,10 @@ Log level behaviour (Requirement 12.3, 12.4):
   - Unrecognised values fall back to INFO and emit exactly ONE WARNING record
     indicating the unrecognised value and the fallback level.
   - Level ordering: DEBUG < INFO < WARNING < ERROR
+
+Note: While the agent layer uses its own JSON logging format internally (to maintain
+backward compatibility with existing tests), the platform-level `configure_structlog()`
+is called in main.py so that structlog is available globally per Requirements 6.1–6.6.
 """
 
 import json
