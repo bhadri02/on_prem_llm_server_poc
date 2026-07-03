@@ -1,0 +1,28 @@
+# Agent Framework (Layer 6) — pinned production dependencies
+# Python 3.12 required
+
+# Web framework
+fastapi==0.115.12
+uvicorn[standard]==0.34.3
+
+# Settings management
+pydantic-settings==2.9.1
+
+# LangChain / LangGraph agent stack
+langchain-openai==0.3.18
+langgraph==0.4.7
+langchain-core==0.3.61
+
+# HTTP client (used by LangChain internals and direct health checks)
+httpx==0.28.1
+
+# Observability
+prometheus-client==0.21.1
+
+# Configuration / serialization
+pyyaml==6.0.2
+
+# Testing
+hypothesis==6.131.8
+pytest==8.3.5
+pytest-asyncio==0.25.3
