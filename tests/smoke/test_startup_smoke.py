@@ -41,7 +41,7 @@ from intelligent_router.task_classifier import ClassifierRules
 # URL constants (match mock settings below)
 # ---------------------------------------------------------------------------
 
-PRIMARY_MODEL_NAME = "llama3.2-3b"
+PRIMARY_MODEL_NAME = "llama3.2:3b"
 PRIMARY_HEALTH_URL = "http://inference-ollama:11434/api/tags"
 CACHE_LOOKUP_URL = "http://cache:8086/cache/lookup"
 CACHE_WRITE_URL = "http://cache:8086/cache/write"

@@ -9,7 +9,7 @@ class AuditEvent(BaseModel):
     audit_id: str
     request_id: str
     timestamp_utc: str  # ISO-8601
-    user_id: str
+    user_id: Optional[str] = None
     department: Optional[str] = None
     model_used: Optional[str] = None
     layer: str

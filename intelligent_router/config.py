@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # Optional with defaults
     # ------------------------------------------------------------------
+    audit_api_key: str = ""                                        # AUDIT_API_KEY
     cache_url: str = "http://cache:8086"                          # CACHE_URL
     inference_adapter_url: str = "http://inference-adapter:8087"  # INFERENCE_ADAPTER_URL
     log_level: str = "INFO"                                        # LOG_LEVEL

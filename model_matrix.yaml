@@ -3,23 +3,25 @@
 # Loaded once at startup; stored on app.state.model_matrix.
 # 'models' — registry of available inference backends.
 # 'task_defaults' — primary model selected for each task type in auto-routing mode.
+#
+# IMPORTANT: model key must match the Ollama model name exactly (colon notation: llama3.2:3b)
 
 models:
-  llama3.2-3b:
+  llama3.2:3b:
     backend: ollama
-    endpoint: http://inference-ollama:11434
+    endpoint: http://localhost:11434
     tasks:
       - chat
       - code
       - reasoning
       - summarization
       - translation
-    health_url: http://inference-ollama:11434/api/tags
+    health_url: http://localhost:11434/api/tags
     fallback: null
 
 task_defaults:
-  chat: llama3.2-3b
-  code: llama3.2-3b
-  reasoning: llama3.2-3b
-  summarization: llama3.2-3b
-  translation: llama3.2-3b
+  chat: "llama3.2:3b"
+  code: "llama3.2:3b"
+  reasoning: "llama3.2:3b"
+  summarization: "llama3.2:3b"
+  translation: "llama3.2:3b"

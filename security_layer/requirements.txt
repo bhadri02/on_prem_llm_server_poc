@@ -1,0 +1,28 @@
+# security_layer/requirements.txt
+# Security & Governance Layer — pinned runtime dependencies only.
+# Heavy packages: presidio (NLP/NER for PII) needs gcc at build time (see Dockerfile).
+
+# Web framework
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+
+# Settings
+pydantic-settings==2.6.1
+
+# HTTP client (outbound calls to router + audit store)
+httpx==0.27.2
+
+# PII detection & masking (Microsoft Presidio)
+presidio-analyzer==2.2.355
+presidio-anonymizer==2.2.355
+# spaCy model required by Presidio — downloaded at build time
+spacy==3.7.5
+
+# YAML parsing (injection patterns file)
+pyyaml==6.0.2
+
+# Prometheus metrics exposition
+prometheus-client==0.21.1
+
+# Structured logging (shared observability module dependency)
+structlog==24.4.0

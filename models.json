@@ -1,0 +1,21 @@
+[
+  {
+    "name": "llama3.2-3b",
+    "version": "1.0.0",
+    "backend": "ollama",
+    "endpoint": "http://localhost:11434",
+    "tasks": [
+      "chat",
+      "summarization",
+      "reasoning",
+      "code",
+      "translation"
+    ],
+    "status": "active",
+    "vram_required_gb": 3.0,
+    "max_context_length": 8192,
+    "fallback_model": null,
+    "registered_at": "2026-06-01T00:00:00Z",
+    "notes": "POC primary model — small CPU-capable model for local Ollama"
+  }
+]

@@ -1,0 +1,20 @@
+# docker-compose.local.yml
+# Starts ONLY the infrastructure services needed for local development.
+# Python services (api_gateway, security_layer, etc.) run directly via run-local.ps1
+#
+# Usage:
+#   docker compose -f docker-compose.local.yml up -d
+#   docker compose -f docker-compose.local.yml down
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: llm-poc-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

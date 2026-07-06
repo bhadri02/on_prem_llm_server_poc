@@ -3,43 +3,46 @@
 .gitignore
 
 # ── Python bytecode ───────────────────────────────────────────────────────────
-__pycache__
 **/__pycache__
 *.pyc
 *.pyo
 *.pyd
 
-# ── Tests (not needed in container images) ────────────────────────────────────
-tests/
-
-# ── Kiro spec/steering files ──────────────────────────────────────────────────
-.kiro/
+# ── Python virtual environments ───────────────────────────────────────────────
+.venv/
+venv/
+env/
 
 # ── Python packaging artifacts ────────────────────────────────────────────────
-*.egg-info
-*.dist-info
+*.egg-info/
+*.dist-info/
 
-# ── Virtual environments ──────────────────────────────────────────────────────
-.venv
-venv
-env
-
-# ── Test / property-test databases ───────────────────────────────────────────
+# ── Test artifacts ────────────────────────────────────────────────────────────
+tests/
 .hypothesis/
 .pytest_cache/
+pytest.ini
+# Per-service test files stay in the service directory but aren't needed in images
+**/tests/
+**/.pytest_cache/
 
-# ── Documentation / local-only files ─────────────────────────────────────────
-*.md
-LOCAL_DEMO_SETUP.md
-POC_to_Production_Gap_Analysis.md
-LAYER_WISE_IMPLEMENTATION.md
-enterprise_onprem_LLM_platform_framework.md
+# ── Node / frontend ───────────────────────────────────────────────────────────
+portal_ui/node_modules/
+portal_ui/dist/
 
-# ── Helm / Kubernetes manifests ───────────────────────────────────────────────
+# ── Kiro IDE files ────────────────────────────────────────────────────────────
+.kiro/
+.vscode/
+
+# ── Helm / Kubernetes / deployment files (not needed in containers) ───────────
 llm-platform/
+scripts/
 seed/
 
-# ── OS / editor artefacts ─────────────────────────────────────────────────────
+# ── Docs (not needed in containers) ──────────────────────────────────────────
+*.md
+
+# ── OS / editor artifacts ─────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 *.swp

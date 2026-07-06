@@ -57,7 +57,7 @@ class GovernanceBlock(BaseModel):
     content_safety_passed: bool = True
     human_approval_required: bool = False
     human_approval_status: str = "not_required"
-    policy_decisions: list[dict] = Field(default_factory=list)
+    policy_decisions: list = Field(default_factory=list)  # str from security layer, dict in prod
 
 
 class RoutingBlock(BaseModel):

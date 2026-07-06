@@ -1,3 +1,7 @@
+---
+inclusion: manual
+---
+
 # Enterprise On-Prem LLM Platform — Master Integration Contract
 
 > **Inclusion:** Always (applies to all layers and all sessions)

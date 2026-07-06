@@ -33,7 +33,7 @@ SAMPLE_IMF = {
     "request_id": REQUEST_ID,
     "request": {"messages": [{"role": "user", "content": "Hello"}]},
     "governance": {"content_safety_passed": True},
-    "routing": {"selected_model": "llama3.2-3b"},
+    "routing": {"selected_model": "llama3.2:3b"},
     "cache": {"lookup_hit": False},
     "response": {"content": None},
 }

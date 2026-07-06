@@ -13,7 +13,7 @@ data:
     # 'task_defaults' — primary model selected for each task type in auto-routing mode.
 
     models:
-      llama3.2-3b:
+      "llama3.2:3b":
         backend: ollama
         endpoint: http://inference-ollama:11434
         tasks:
@@ -26,11 +26,11 @@ data:
         fallback: null
 
     task_defaults:
-      chat: llama3.2-3b
-      code: llama3.2-3b
-      reasoning: llama3.2-3b
-      summarization: llama3.2-3b
-      translation: llama3.2-3b
+      chat: "llama3.2:3b"
+      code: "llama3.2:3b"
+      reasoning: "llama3.2:3b"
+      summarization: "llama3.2:3b"
+      translation: "llama3.2:3b"
 
   task_classifier_rules.yaml: |
     # task_classifier_rules.yaml

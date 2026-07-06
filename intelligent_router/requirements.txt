@@ -1,0 +1,22 @@
+# intelligent_router/requirements.txt
+# Intelligent Router (Layer 3) — pinned runtime dependencies only.
+# No heavy ML packages — pure HTTP routing + YAML classification.
+
+# Web framework
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+
+# Settings
+pydantic-settings==2.6.1
+
+# HTTP client (calls to cache, inference adapter, audit store)
+httpx==0.27.2
+
+# YAML parsing (model_matrix.yaml, task_classifier_rules.yaml)
+pyyaml==6.0.2
+
+# Prometheus metrics exposition
+prometheus-client==0.21.1
+
+# Structured logging (shared observability module dependency)
+structlog==24.4.0

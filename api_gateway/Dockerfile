@@ -1,23 +1,25 @@
-# API Gateway — Layer 1 (POC)
-# Python 3.11-slim base image keeps the image lean for POC use.
+# api_gateway/Dockerfile
+# Build context: repo root  (docker build -f api_gateway/Dockerfile .)
+FROM python:3.12-slim
 
-FROM python:3.11-slim
-
-# Prevent .pyc files and enable unbuffered stdout/stderr for structured logging
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install dependencies first (layer cached separately from source)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies (service-specific + shared observability)
+COPY api_gateway/requirements.txt ./requirements.txt
+COPY shared/requirements.txt      ./shared-requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+ && pip install --no-cache-dir -r shared-requirements.txt
 
-# Copy the application package
+# Copy application source
 COPY api_gateway/ ./api_gateway/
 
-# API Gateway listens on port 8080 (configurable via PORT env var)
-EXPOSE 8080
+# Copy shared observability package (imported as shared.observability)
+COPY shared/ ./shared/
 
-# Run with uvicorn; PORT and LOG_LEVEL are injected by the Helm chart
+EXPOSE 8080 9090
+
+# api_gateway mounts Prometheus at /metrics on port 8080 — no separate metrics process.
 CMD ["uvicorn", "api_gateway.main:app", "--host", "0.0.0.0", "--port", "8080"]

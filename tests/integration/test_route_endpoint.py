@@ -110,7 +110,7 @@ def make_inference_response(imf: dict) -> dict:
 # URL constants
 # ---------------------------------------------------------------------------
 
-PRIMARY_MODEL_NAME = "llama3.2-3b"
+PRIMARY_MODEL_NAME = "llama3.2:3b"
 FALLBACK_MODEL_NAME = "llama3.2-3b-fallback"
 
 PRIMARY_HEALTH_URL = "http://inference-ollama:11434/api/tags"

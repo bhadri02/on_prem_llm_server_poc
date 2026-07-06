@@ -85,7 +85,7 @@ INFERENCE_RESPONSE_BODY = {
         "policy_decisions": [],
     },
     "routing": {
-        "selected_model": "llama3.2-3b",
+        "selected_model": "llama3.2:3b",
         "routing_mode": "auto",
         "fallback_level": 0,
     },
@@ -116,7 +116,7 @@ def _make_settings() -> MagicMock:
 
 def _make_matrix() -> ModelMatrix:
     entry = ModelEntry(
-        name="llama3.2-3b",
+        name="llama3.2:3b",
         backend="ollama",
         endpoint="http://inference-ollama:11434",
         tasks=["chat", "code", "reasoning", "summarization", "translation"],
@@ -124,13 +124,13 @@ def _make_matrix() -> ModelMatrix:
         fallback=None,
     )
     return ModelMatrix(
-        models={"llama3.2-3b": entry},
+        models={"llama3.2:3b": entry},
         task_defaults={
-            "chat": "llama3.2-3b",
-            "code": "llama3.2-3b",
-            "reasoning": "llama3.2-3b",
-            "summarization": "llama3.2-3b",
-            "translation": "llama3.2-3b",
+            "chat": "llama3.2:3b",
+            "code": "llama3.2:3b",
+            "reasoning": "llama3.2:3b",
+            "summarization": "llama3.2:3b",
+            "translation": "llama3.2:3b",
         },
     )
 
@@ -221,7 +221,7 @@ INFERENCE_RESPONSE_BODY = {
         "policy_decisions": [],
     },
     "routing": {
-        "selected_model": "llama3.2-3b",
+        "selected_model": "llama3.2:3b",
         "routing_mode": "auto",
         "fallback_level": 0,
     },
@@ -252,7 +252,7 @@ def _make_settings() -> MagicMock:
 
 def _make_matrix() -> ModelMatrix:
     entry = ModelEntry(
-        name="llama3.2-3b",
+        name="llama3.2:3b",
         backend="ollama",
         endpoint="http://inference-ollama:11434",
         tasks=["chat", "code", "reasoning", "summarization", "translation"],
@@ -260,13 +260,13 @@ def _make_matrix() -> ModelMatrix:
         fallback=None,
     )
     return ModelMatrix(
-        models={"llama3.2-3b": entry},
+        models={"llama3.2:3b": entry},
         task_defaults={
-            "chat": "llama3.2-3b",
-            "code": "llama3.2-3b",
-            "reasoning": "llama3.2-3b",
-            "summarization": "llama3.2-3b",
-            "translation": "llama3.2-3b",
+            "chat": "llama3.2:3b",
+            "code": "llama3.2:3b",
+            "reasoning": "llama3.2:3b",
+            "summarization": "llama3.2:3b",
+            "translation": "llama3.2:3b",
         },
     )
 
