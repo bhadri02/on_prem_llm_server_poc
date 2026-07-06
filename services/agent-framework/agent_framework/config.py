@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     router_url: str = "http://router:8082"                  # ROUTER_URL
     gateway_api_key: str = "poc-secret-key"                 # GATEWAY_API_KEY
-    tool_catalog_path: str = "/config/tools/catalog.yaml"   # TOOL_CATALOG_PATH
+    tool_catalog_path: str = "/app/config/tools/catalog.yaml"   # TOOL_CATALOG_PATH
 
     # ------------------------------------------------------------------
     # Optional with defaults

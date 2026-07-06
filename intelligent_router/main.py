@@ -24,6 +24,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from prometheus_client import make_asgi_app
 
 from intelligent_router.config import settings
 from intelligent_router.logging_config import get_logger
@@ -208,6 +209,7 @@ def create_app() -> FastAPI:
     application.include_router(route_router)
     application.include_router(openai_router)
     application.include_router(health_router)
+    application.mount("/metrics", make_asgi_app())
 
     return application
 

@@ -147,16 +147,16 @@ async def lifespan(app: FastAPI):
     # 6. Mark service as ready
     # ------------------------------------------------------------------
     health._ready = True
-    _log({"event": "startup_complete", "port": settings.port, "metrics_port": settings.port + 1})
+    _log({"event": "startup_complete", "port": settings.port, "metrics_port": settings.metrics_port})
 
     # ------------------------------------------------------------------
-    # 7. Start Prometheus metrics server on port+1 as a background task
+    # 7. Start Prometheus metrics server on metrics_port as a background task
     # ------------------------------------------------------------------
     metrics_app = make_asgi_app()
     metrics_config = uvicorn.Config(
         app=metrics_app,
         host="0.0.0.0",
-        port=settings.port + 1,
+        port=settings.metrics_port,
         log_level="warning",
     )
     metrics_server = uvicorn.Server(metrics_config)

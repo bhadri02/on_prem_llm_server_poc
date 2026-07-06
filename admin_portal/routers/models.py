@@ -103,7 +103,7 @@ async def list_models() -> Response:
     - Propagates the upstream status code and body back to the caller unchanged.
     - Returns HTTP 502 on upstream network failure / timeout.
     """
-    upstream_url = f"{settings.MODEL_REGISTRY_URL}/"
+    upstream_url = f"{settings.MODEL_REGISTRY_URL}/models/"
     t_start = time.monotonic()
 
     # --- Req 6.4, 7.7: Proxy and handle unavailable upstream ----------------
@@ -113,6 +113,7 @@ async def list_models() -> Response:
             "GET",
             upstream_url,
             timeout=_PROXY_TIMEOUT,
+            headers={"X-Api-Key": settings.REGISTRY_API_KEY} if settings.REGISTRY_API_KEY else None,
         )
     except ProxyUnavailableError:
         latency = time.monotonic() - t_start
@@ -218,6 +219,7 @@ async def update_model_status(name: str, request: Request) -> Response:
             upstream_url,
             json=patch.model_dump(),
             timeout=_PROXY_TIMEOUT,
+            headers={"X-Api-Key": settings.REGISTRY_API_KEY} if settings.REGISTRY_API_KEY else None,
         )
     except ProxyUnavailableError:
         latency = time.monotonic() - t_start

@@ -191,7 +191,7 @@ async def chat_completions(
     # ------------------------------------------------------------------
     if payload.stream:
         settings = get_settings()
-        url = f"{settings.downstream_security_url}/process"
+        url = f"{settings.downstream_security_url}/security/check"
 
         try:
             # Open the streaming connection; kept alive for the generator.
@@ -243,7 +243,21 @@ async def chat_completions(
     # ------------------------------------------------------------------
     try:
         imf_response = await forward_to_security(imf, client)
-    except DownstreamError:
+    except DownstreamError as exc:
+        # Relay security blocks (400/403) directly; wrap true gateway errors as 502
+        if exc.status_code in (400, 403, 429):
+            emit_audit_event(
+                build_audit_event(
+                    request_id=request_id,
+                    event_type="response_sent",
+                    method=method,
+                    path=path,
+                    status_code=exc.status_code,
+                    latency_ms=(time.monotonic() - start_time) * 1000,
+                    outcome="block",
+                )
+            )
+            return JSONResponse(status_code=exc.status_code, content=exc.body)
         emit_audit_event(
             build_audit_event(
                 request_id=request_id,

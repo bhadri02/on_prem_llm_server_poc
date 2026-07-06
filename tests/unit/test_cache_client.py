@@ -38,7 +38,7 @@ LOOKUP_URL = f"{CACHE_URL}/cache/lookup"
 WRITE_URL = f"{CACHE_URL}/cache/write"
 
 MESSAGES = [{"role": "user", "content": "Hello"}]
-MODEL = "llama3.2-3b"
+MODEL = "llama3.2:3b"
 TASK_TYPE = "chat"
 REQUEST_ID = "00000000-0000-4000-8000-000000000001"
 RESPONSE_IMF = {

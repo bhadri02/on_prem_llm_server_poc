@@ -16,15 +16,11 @@ from api_gateway.schemas.imf import IMFDocument
 
 
 class DownstreamError(Exception):
-    """Raised when a downstream service call cannot be completed successfully.
+    """Raised when a downstream service call cannot be completed successfully."""
 
-    Args:
-        status_code: The HTTP status code that best describes the failure
-            (typically ``502`` for gateway errors).
-    """
-
-    def __init__(self, status_code: int) -> None:
+    def __init__(self, status_code: int, body: dict | None = None) -> None:
         self.status_code = status_code
+        self.body = body or {}
         super().__init__(f"Downstream service error: {status_code}")
 
 
@@ -34,27 +30,13 @@ async def forward_to_security(
 ) -> IMFDocument:
     """POST an IMFDocument to the Security & Governance layer for processing.
 
-    Sends the serialized IMF to ``{settings.downstream_security_url}/process``
-    and returns the updated IMFDocument returned in the response body.
-
-    Args:
-        imf: The IMFDocument to forward.
-        client: A shared :class:`httpx.AsyncClient` (injected by the caller
-            so connections can be reused across requests).
-
-    Returns:
-        The updated :class:`IMFDocument` returned by the security layer.
-
-    Raises:
-        DownstreamError: With status code ``502`` for any of the following:
-            - Network / connection errors (``httpx.ConnectError``,
-              ``httpx.RequestError``)
-            - Timeout (``httpx.TimeoutException``)
-            - Non-200 HTTP response
-            - Empty or non-JSON response body
+    Returns the updated IMFDocument on HTTP 200.
+    Raises DownstreamError carrying the original status_code and body for
+    any non-200 response so the caller can relay security blocks (400/403)
+    back to the client instead of always returning 502.
     """
     settings = get_settings()
-    url = f"{settings.downstream_security_url}/process"
+    url = f"{settings.downstream_security_url}/security/check"
 
     try:
         response = await client.post(
@@ -71,9 +53,13 @@ async def forward_to_security(
         raise DownstreamError(502)
 
     if response.status_code != 200:
-        raise DownstreamError(502)
+        # Relay the exact status + body so security blocks surface correctly
+        try:
+            body = response.json()
+        except Exception:
+            body = {}
+        raise DownstreamError(response.status_code, body)
 
-    # Guard against empty or non-JSON body
     raw = response.content
     if not raw:
         raise DownstreamError(502)

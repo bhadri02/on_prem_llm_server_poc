@@ -1,40 +1,48 @@
-# ──────────────────────────────────────────────────────────────────────────────
-# Stage 1 — builder: install Python deps into an isolated prefix
-# ──────────────────────────────────────────────────────────────────────────────
+# security_layer/Dockerfile
+# Build context: repo root  (docker build -f security_layer/Dockerfile .)
+#
+# gcc is needed at build time for Presidio's Rust/C extension compilation.
+# The final runtime image does NOT include gcc — multi-stage keeps the image lean.
+
+# ── Stage 1: builder ──────────────────────────────────────────────────────────
 FROM python:3.12-slim AS builder
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc build-essential \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
-# Install build dependencies (needed by some Presidio transitive deps)
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc \
-    && rm -rf /var/lib/apt/lists/*
+COPY security_layer/requirements.txt ./requirements.txt
+COPY shared/requirements.txt         ./shared-requirements.txt
 
-COPY requirements.txt .
+RUN pip install --upgrade pip --no-cache-dir \
+ && pip install --no-cache-dir --prefix=/install -r requirements.txt \
+ && pip install --no-cache-dir --prefix=/install -r shared-requirements.txt
 
-RUN pip install --upgrade pip \
-    && pip install --prefix=/install --no-cache-dir -r requirements.txt
+# Download the spaCy English model required by Presidio.
+# Use en_core_web_sm (12MB) baked at build time — application code
+# explicitly loads this model so no outbound download occurs at runtime.
+RUN PYTHONPATH=/install/lib/python3.12/site-packages \
+    python -m spacy download en_core_web_sm --target /install/lib/python3.12/site-packages
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Stage 2 — runtime: lean image with only what is needed to run the service
-# ──────────────────────────────────────────────────────────────────────────────
-FROM python:3.12-slim AS runtime
+# ── Stage 2: runtime ──────────────────────────────────────────────────────────
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Copy installed packages from builder stage
 COPY --from=builder /install /usr/local
 
 # Copy application source
-COPY security_layer/ ./security_layer/
+COPY security_layer/     ./security_layer/
+COPY shared/             ./shared/
 
-# Copy injection patterns configuration
-COPY injection_patterns.yaml .
+# injection_patterns.yaml lives at repo root
+COPY injection_patterns.yaml ./injection_patterns.yaml
 
-# Expose API port and Prometheus metrics port
 EXPOSE 8081 9090
 
-# Run both ASGI apps in the same container (POC single-process pattern)
-# - Main app on port 8081
-# - Metrics app on port 9090
-CMD ["sh", "-c", "uvicorn security_layer.main:app --host 0.0.0.0 --port 8081 & uvicorn security_layer.metrics_app:metrics_app --host 0.0.0.0 --port 9090 & wait"]
+CMD ["sh", "-c", \
+     "uvicorn security_layer.main:app --host 0.0.0.0 --port 8081 & \
+      uvicorn security_layer.metrics_app:metrics_app --host 0.0.0.0 --port 9090 & \
+      wait"]

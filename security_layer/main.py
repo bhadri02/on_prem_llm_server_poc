@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from prometheus_client import make_asgi_app
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
 
@@ -104,7 +105,16 @@ async def lifespan(app: FastAPI):
     anonymizer = None
     if settings.pii_enabled:
         try:
-            analyzer = AnalyzerEngine()
+            from presidio_analyzer.nlp_engine import NlpEngineProvider
+            # Explicitly load en_core_web_sm (baked into the image at build time).
+            # Presidio's default is en_core_web_lg (587 MB) which is NOT baked in.
+            configuration = {
+                "nlp_engine_name": "spacy",
+                "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
+            }
+            provider = NlpEngineProvider(nlp_configuration=configuration)
+            nlp_engine = provider.create_engine()
+            analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
             anonymizer = AnonymizerEngine()
         except Exception as exc:
             logger.error(
@@ -191,6 +201,7 @@ async def validation_exception_handler(
 app.include_router(pre_check_router)
 app.include_router(post_check_router)
 app.include_router(health_router)
+app.mount("/metrics", make_asgi_app())
 
 
 # ---------------------------------------------------------------------------

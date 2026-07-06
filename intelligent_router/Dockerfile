@@ -1,34 +1,36 @@
+# intelligent_router/Dockerfile
+# Build context: repo root  (docker build -f intelligent_router/Dockerfile .)
+
 # ── Stage 1: builder ──────────────────────────────────────────────────────────
-# Install all Python dependencies into /install so the final stage stays lean.
 FROM python:3.12-slim AS builder
 
 WORKDIR /build
 
-# Upgrade pip then install dependencies into a prefix directory.
-COPY requirements.txt .
-RUN pip install --upgrade pip --no-cache-dir \
- && pip install --no-cache-dir --prefix=/install -r requirements.txt
+COPY intelligent_router/requirements.txt ./requirements.txt
+COPY shared/requirements.txt             ./shared-requirements.txt
 
+RUN pip install --upgrade pip --no-cache-dir \
+ && pip install --no-cache-dir --prefix=/install -r requirements.txt \
+ && pip install --no-cache-dir --prefix=/install -r shared-requirements.txt
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────────
 FROM python:3.12-slim
 
-# Copy installed packages from the builder stage.
-COPY --from=builder /install /usr/local
-
-# Set working directory.
 WORKDIR /app
 
-# Copy the application package.
-COPY intelligent_router/ /app/intelligent_router/
+COPY --from=builder /install /usr/local
 
-# Copy config YAML files (located at repo root).
-COPY task_classifier_rules.yaml /app/task_classifier_rules.yaml
-COPY model_matrix.yaml /app/model_matrix.yaml
+# Copy application source
+COPY intelligent_router/ ./intelligent_router/
+COPY shared/             ./shared/
 
-# Expose the API port and the Prometheus metrics port.
-EXPOSE 8082
-EXPOSE 9090
+# YAML config files live at repo root — baked into image
+COPY model_matrix.yaml           ./model_matrix.yaml
+COPY task_classifier_rules.yaml  ./task_classifier_rules.yaml
 
-# Start both ASGI servers; wait keeps the container alive until either exits.
-CMD ["sh", "-c", "uvicorn intelligent_router.main:app --host 0.0.0.0 --port 8082 & uvicorn intelligent_router.metrics_app:metrics_app --host 0.0.0.0 --port 9090 & wait"]
+EXPOSE 8082 9090
+
+CMD ["sh", "-c", \
+     "uvicorn intelligent_router.main:app --host 0.0.0.0 --port 8082 & \
+      uvicorn intelligent_router.metrics_app:metrics_app --host 0.0.0.0 --port 9090 & \
+      wait"]

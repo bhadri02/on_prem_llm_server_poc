@@ -202,7 +202,7 @@ async def list_audit_events(
         params["to"] = to_dt
 
     query_string = "&".join(f"{k}={v}" for k, v in params.items())
-    upstream_url = f"{settings.AUDIT_STORE_URL}/events?{query_string}"
+    upstream_url = f"{settings.AUDIT_STORE_URL}/audit/events?{query_string}"
 
     # --- Req 4.3, 4.4: Proxy and sort descending by timestamp_utc -----------
     try:
@@ -239,7 +239,8 @@ async def list_audit_events(
 
     # Parse, sort descending by timestamp_utc, and return
     raw = upstream_response.json()
-    events = [AuditEvent(**e) for e in raw.get("events", [])]
+    # Audit store returns a plain list, not a dict with "events" key
+    events = [AuditEvent(**e) for e in raw] if isinstance(raw, list) else []
     events.sort(key=lambda e: e.timestamp_utc, reverse=True)
     result = AuditEventList(events=events)
 
@@ -293,7 +294,7 @@ async def get_audit_by_request(request_id: str) -> Response:
             media_type="application/json",
         )
 
-    upstream_url = f"{settings.AUDIT_STORE_URL}/requests/{request_id}"
+    upstream_url = f"{settings.AUDIT_STORE_URL}/audit/requests/{request_id}"
 
     # --- Req 5.5, 5.7: Proxy and handle empty / unavailable upstream --------
     try:
@@ -333,7 +334,8 @@ async def get_audit_by_request(request_id: str) -> Response:
         result = AuditEventList(events=[])
     else:
         raw = upstream_response.json()
-        events_data = raw.get("events", [])
+        # Audit store returns a plain list, not a dict with "events" key
+        events_data = raw if isinstance(raw, list) else []
         if not events_data:
             result = AuditEventList(events=[])
         else:

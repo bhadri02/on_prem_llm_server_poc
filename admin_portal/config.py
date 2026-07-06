@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     API_GATEWAY_URL: str = "http://api-gateway:8080"
     AUDIT_STORE_URL: str = "http://audit-store:9200"
     MODEL_REGISTRY_URL: str = "http://model-registry:5000"
+    REGISTRY_API_KEY: str = ""
     PROMETHEUS_URL: str = "http://prometheus:9090"
     GRAFANA_URL: str = "http://grafana:3000"
     LOG_LEVEL: str = "INFO"

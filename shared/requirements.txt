@@ -1,14 +1,14 @@
 # shared/requirements.txt
-# Pinned dependencies for the shared observability package.
-# All six platform layers should install this file alongside their own requirements.
-#
-# Install (editable) alongside a layer:
-#   pip install -r shared/requirements.txt
-#   pip install -e shared/   # once setup.py / pyproject.toml is added
+# Shared observability package — minimal runtime dependencies.
+# Installed alongside every service's own requirements.txt.
 
+# Structured JSON logging
 structlog==24.4.0
-prometheus-client==0.20.0
 
-# Testing
-hypothesis==6.108.5
-pytest==8.2.2
+# Prometheus metrics (Counter, Histogram, etc.)
+prometheus-client==0.21.1
+
+# Starlette (BaseHTTPMiddleware used in middleware.py)
+# Note: already pulled in transitively by fastapi in every service,
+# but listed here so the shared package is self-contained.
+starlette==0.41.3

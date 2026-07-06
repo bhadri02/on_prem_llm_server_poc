@@ -91,11 +91,17 @@ export default function MetricsView() {
   // --- Ready: render iframe or fallback ---
   const iframeSrc = `${state.grafanaUrl}/d/poc-overview/llm-platform-poc?orgId=1&kiosk`;
 
+  // Treat the default Docker hostname as "not configured for local dev"
+  const isLocalDefault =
+    state.grafanaUrl.includes("grafana:3000") ||
+    state.grafanaUrl.includes("localhost:3000") ||
+    state.grafanaUrl.includes("127.0.0.1:3000");
+
   return (
     <div>
       <h2 style={headingStyle}>Metrics</h2>
 
-      {iframeError ? (
+      {iframeError || isLocalDefault ? (
         // Fallback replaces the iframe area (Req 9.5, 12.5)
         <div
           role="status"
@@ -103,13 +109,17 @@ export default function MetricsView() {
           style={fallbackStyle}
           data-testid="grafana-fallback"
         >
-          <span style={{ fontSize: 32, marginBottom: 12 }}>📊</span>
-          <p style={{ margin: 0, fontWeight: 600 }}>
-            Grafana dashboard is currently unavailable.
+          <span style={{ fontSize: 40, marginBottom: 16 }}>📊</span>
+          <p style={{ margin: 0, fontWeight: 600, fontSize: 16 }}>
+            Grafana dashboard not available in local mode
           </p>
-          <p style={{ margin: "8px 0 0", color: "#6b7280", fontSize: 14 }}>
-            The dashboard at <code>{state.grafanaUrl}</code> could not be loaded. Check
-            that Grafana is running and the URL is correct.
+          <p style={{ margin: "10px 0 0", color: "#6b7280", fontSize: 14, maxWidth: 480, textAlign: "center" }}>
+            The Metrics tab embeds a Grafana dashboard which requires the full
+            Docker/K8s stack. In local dev mode only Prometheus and Grafana
+            running via <code>docker-compose</code> would populate this view.
+          </p>
+          <p style={{ margin: "12px 0 0", color: "#6b7280", fontSize: 13 }}>
+            Expected URL: <code>{state.grafanaUrl}</code>
           </p>
         </div>
       ) : (

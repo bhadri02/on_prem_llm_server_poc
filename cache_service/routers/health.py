@@ -74,8 +74,18 @@ async def health_check(request: Request) -> JSONResponse:
     try:
         redis = request.app.state.redis
         if redis is None:
-            raise RuntimeError("Redis client is None")
-        await redis.ping()
+            # Redis was unreachable at startup — attempt a lazy reconnect
+            from cache_service.config import get_settings
+            import redis.asyncio as aioredis
+            settings = get_settings()
+            redis = aioredis.from_url(settings.redis_url, decode_responses=False)
+            await redis.ping()
+            # Reconnect succeeded — update app state so caching works
+            request.app.state.redis = redis
+            request.app.state.exact_cache.redis = redis
+            request.app.state.semantic_cache.redis = redis
+        else:
+            await redis.ping()
         return JSONResponse(
             status_code=200,
             content={"status": "ok"},

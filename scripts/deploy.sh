@@ -31,6 +31,7 @@ SECRET_NAME="llm-poc-secrets"
 
 CHART_DIR="${REPO_ROOT}/llm-platform"
 VALUES_FILE="${CHART_DIR}/values-poc.yaml"
+LOCAL_VALUES_FILE="${CHART_DIR}/values-poc-local.yaml"
 OBSERVABILITY_CHART="${CHART_DIR}/charts/observability"
 
 INGRESS_MANIFEST="https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml"
@@ -338,6 +339,7 @@ run bash -c "kubectl create secret generic ${SECRET_NAME} \
   --namespace ${NAMESPACE} \
   --from-literal=GATEWAY_API_KEY=poc-secret-key \
   --from-literal=REDIS_PASSWORD='' \
+  --from-literal=AUDIT_API_KEY=poc-audit-key \
   --dry-run=client -o yaml | kubectl apply -f -" \
   || { fail "Step ${STEP}: Failed to create Secret '${SECRET_NAME}'."; exit 1; }
 
@@ -375,8 +377,9 @@ info "Running 'helm upgrade --install ${RELEASE_NAME}'..."
 run helm upgrade --install "${RELEASE_NAME}" "${CHART_DIR}" \
   --namespace "${NAMESPACE}" \
   --values "${VALUES_FILE}" \
-  --atomic \
-  --timeout 10m \
+  --values "${LOCAL_VALUES_FILE}" \
+  --wait \
+  --timeout 15m \
   || { fail "Step ${STEP}: 'helm upgrade --install' failed. Run 'helm status ${RELEASE_NAME} -n ${NAMESPACE}' for details."; exit 1; }
 
 success "Step ${STEP} complete ($(elapsed "${STEP_START}")s)"

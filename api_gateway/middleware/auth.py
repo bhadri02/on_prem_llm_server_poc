@@ -36,8 +36,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
     EXEMPT_PATHS: frozenset[str] = frozenset({"/health", "/metrics"})
 
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
-        # Skip auth for health/metrics probes
-        if request.url.path in self.EXEMPT_PATHS:
+        # Skip auth for health/metrics probes (exact match or prefix for mounted sub-apps)
+        path = request.url.path
+        if path in self.EXEMPT_PATHS or path.startswith("/metrics"):
             return await call_next(request)
 
         settings = get_settings()
