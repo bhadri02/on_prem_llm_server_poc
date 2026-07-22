@@ -31,25 +31,11 @@ export default function LoadingSpinner({ label = "Loading…" }: LoadingSpinnerP
     <div
       role="status"
       aria-label={label}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: 16,
-        color: "#6b7280",
-      }}
+      className="spinner-container"
     >
       <span
         aria-hidden="true"
-        style={{
-          display: "inline-block",
-          width: 20,
-          height: 20,
-          border: "3px solid #e5e7eb",
-          borderTopColor: "#3b82f6",
-          borderRadius: "50%",
-          animation: "_spin 0.8s linear infinite",
-        }}
+        className="spinner"
       />
       <span>{label}</span>
     </div>

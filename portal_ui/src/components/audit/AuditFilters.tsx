@@ -20,25 +20,6 @@ interface AuditFiltersProps {
   onOutcomeChange: (v: string) => void;
 }
 
-const labelStyle: React.CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: 4,
-  fontSize: 13,
-  color: "#475569",
-  fontWeight: 500,
-};
-
-const inputStyle: React.CSSProperties = {
-  padding: "6px 10px",
-  border: "1px solid #cbd5e1",
-  borderRadius: 6,
-  fontSize: 14,
-  color: "#1e293b",
-  background: "#ffffff",
-  outline: "none",
-};
-
 export default function AuditFilters({
   from,
   to,
@@ -51,47 +32,55 @@ export default function AuditFilters({
 }: AuditFiltersProps) {
   return (
     <div
+      className="card"
       style={{
         display: "flex",
         flexWrap: "wrap",
-        gap: 16,
+        gap: 20,
         alignItems: "flex-end",
-        padding: "12px 16px",
-        background: "#f1f5f9",
-        borderRadius: 8,
-        border: "1px solid #e2e8f0",
-        marginBottom: 16,
+        padding: "16px 20px",
+        marginBottom: 24,
       }}
     >
       {/* From datetime */}
-      <label style={labelStyle}>
-        From
+      <div className="form-group">
+        <label htmlFor="filter-from" className="form-label">
+          From
+        </label>
         <input
+          id="filter-from"
           type="datetime-local"
           value={from}
           onChange={(e) => onFromChange(e.target.value)}
-          style={inputStyle}
+          className="form-input"
         />
-      </label>
+      </div>
 
       {/* To datetime */}
-      <label style={labelStyle}>
-        To
+      <div className="form-group">
+        <label htmlFor="filter-to" className="form-label">
+          To
+        </label>
         <input
+          id="filter-to"
           type="datetime-local"
           value={to}
           onChange={(e) => onToChange(e.target.value)}
-          style={inputStyle}
+          className="form-input"
         />
-      </label>
+      </div>
 
       {/* Layer dropdown */}
-      <label style={labelStyle}>
-        Layer
+      <div className="form-group">
+        <label htmlFor="filter-layer" className="form-label">
+          Layer
+        </label>
         <select
+          id="filter-layer"
           value={layer}
           onChange={(e) => onLayerChange(e.target.value)}
-          style={inputStyle}
+          className="form-select"
+          style={{ minWidth: 160 }}
         >
           <option value="">All</option>
           <option value="api_gateway">api_gateway</option>
@@ -103,21 +92,25 @@ export default function AuditFilters({
           <option value="governance">governance</option>
           <option value="platform">platform</option>
         </select>
-      </label>
+      </div>
 
       {/* Outcome dropdown */}
-      <label style={labelStyle}>
-        Outcome
+      <div className="form-group">
+        <label htmlFor="filter-outcome" className="form-label">
+          Outcome
+        </label>
         <select
+          id="filter-outcome"
           value={outcome}
           onChange={(e) => onOutcomeChange(e.target.value)}
-          style={inputStyle}
+          className="form-select"
+          style={{ minWidth: 140 }}
         >
           <option value="">All</option>
           <option value="pass">pass</option>
           <option value="block">block</option>
         </select>
-      </label>
+      </div>
     </div>
   );
 }

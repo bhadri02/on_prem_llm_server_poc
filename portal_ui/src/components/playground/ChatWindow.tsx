@@ -58,12 +58,12 @@ export default function ChatWindow({
   const sendDisabled = disabled || isLoading || message.trim().length === 0;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       {/* Message composition area */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div className="form-group" style={{ gap: 8 }}>
         <label
           htmlFor="chat-message"
-          style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}
+          className="form-label"
         >
           Message
         </label>
@@ -77,16 +77,8 @@ export default function ChatWindow({
           disabled={disabled || isLoading}
           aria-label="Chat message"
           placeholder="Type your message… (Ctrl+Enter to send)"
-          style={{
-            padding: "8px 12px",
-            borderRadius: 6,
-            border: "1px solid #d1d5db",
-            fontSize: 14,
-            resize: "vertical",
-            fontFamily: "inherit",
-            background: disabled || isLoading ? "#f3f4f6" : "#ffffff",
-            cursor: disabled || isLoading ? "not-allowed" : "text",
-          }}
+          className="form-textarea"
+          style={{ resize: "vertical" }}
         />
         <div
           style={{
@@ -95,24 +87,15 @@ export default function ChatWindow({
             alignItems: "center",
           }}
         >
-          <span style={{ fontSize: 12, color: "#9ca3af" }}>
+          <span style={{ fontSize: 12, color: "var(--text-light)" }}>
             {message.length} / {MAX_LENGTH}
           </span>
           <button
             onClick={handleSend}
             disabled={sendDisabled}
             aria-label={isLoading ? "Sending…" : "Send message"}
-            style={{
-              padding: "8px 20px",
-              borderRadius: 6,
-              border: "none",
-              background: sendDisabled ? "#93c5fd" : "#3b82f6",
-              color: "#ffffff",
-              fontWeight: 600,
-              fontSize: 14,
-              cursor: sendDisabled ? "not-allowed" : "pointer",
-              transition: "background 0.15s",
-            }}
+            className="btn btn-primary"
+            style={{ padding: "8px 24px" }}
           >
             {isLoading ? "Sending…" : "Send"}
           </button>
@@ -121,46 +104,40 @@ export default function ChatWindow({
 
       {/* Response display */}
       {response && (
-        <section
-          role="region"
-          aria-label="Assistant response"
-          style={{
-            background: "#f0f9ff",
-            border: "1px solid #bae6fd",
-            borderRadius: 6,
-            padding: "12px 16px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 10,
-          }}
-        >
-          <p style={{ margin: 0, fontSize: 14, color: "#1e3a5f", whiteSpace: "pre-wrap" }}>
-            {response.content}
-          </p>
-
-          <div style={{ fontSize: 12, color: "#6b7280" }}>
-            <span style={{ fontWeight: 600 }}>Request ID: </span>
-            <code style={{ fontFamily: "monospace" }}>{response.requestId}</code>
-          </div>
-
-          <button
-            onClick={() => onViewAudit(response.requestId)}
-            aria-label={`View audit trail for request ${response.requestId}`}
-            style={{
-              alignSelf: "flex-start",
-              padding: "6px 14px",
-              borderRadius: 6,
-              border: "1px solid #3b82f6",
-              background: "#ffffff",
-              color: "#3b82f6",
-              fontWeight: 600,
-              fontSize: 13,
-              cursor: "pointer",
-            }}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div className="form-label">Response</div>
+          
+          <section
+            role="region"
+            aria-label="Assistant response"
+            className="chat-message-bubble chat-bubble-assistant"
+            style={{ display: "flex", flexDirection: "column", gap: 12 }}
           >
-            View Audit Trail
-          </button>
-        </section>
+            <p style={{ margin: 0, fontSize: "14.5px", color: "var(--text-main)", whiteSpace: "pre-wrap" }}>
+              {response.content}
+            </p>
+
+            <div style={{ fontSize: 12, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontWeight: 600 }}>Request ID:</span>
+              <code style={{ fontFamily: "var(--font-mono)", background: "#f1f5f9", padding: "2px 6px", borderRadius: 4 }}>
+                {response.requestId}
+              </code>
+            </div>
+
+            <button
+              onClick={() => onViewAudit(response.requestId)}
+              aria-label={`View audit trail for request ${response.requestId}`}
+              className="btn btn-outline"
+              style={{
+                alignSelf: "flex-start",
+                padding: "6px 14px",
+                fontSize: 13,
+              }}
+            >
+              View Audit Trail
+            </button>
+          </section>
+        </div>
       )}
     </div>
   );

@@ -1,0 +1,7 @@
+[
+  { "id": "user_01", "name": "Adrian Carter", "role": "Admin", "department": "Security Operations", "email": "adrian.carter@gwcdata.ai" },
+  { "id": "user_02", "name": "Bianca Vance", "role": "Developer", "department": "Inference Engine Dev", "email": "bianca.vance@gwcdata.ai" },
+  { "id": "user_03", "name": "Chloe Dupont", "role": "Auditor", "department": "Governance & Compliance", "email": "chloe.dupont@gwcdata.ai" },
+  { "id": "user_04", "name": "Daniel Kovic", "role": "Developer", "department": "Product Engineering", "email": "daniel.kovic@gwcdata.ai" },
+  { "id": "user_05", "name": "Emma Larsson", "role": "Auditor", "department": "Risk Management", "email": "emma.larsson@gwcdata.ai" }
+]
