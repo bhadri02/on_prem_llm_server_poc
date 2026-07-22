@@ -33,7 +33,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
     On success, emits an ``auth_pass`` audit event and forwards the request.
     """
 
-    EXEMPT_PATHS: frozenset[str] = frozenset({"/health", "/metrics"})
+    EXEMPT_PATHS: frozenset[str] = frozenset({"/health", "/metrics","/docs","/openapi.json"})
 
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
         # Skip auth for health/metrics probes (exact match or prefix for mounted sub-apps)

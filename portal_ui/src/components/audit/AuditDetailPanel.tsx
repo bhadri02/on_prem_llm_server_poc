@@ -14,6 +14,14 @@ import { getAuditRequest } from "../../api/portalClient";
 import ErrorBanner from "../ErrorBanner";
 import LoadingSpinner from "../LoadingSpinner";
 
+/** Formats an ISO UTC string into a neat local date + time display */
+function formatTimestamp(iso: string): string {
+  const d = new Date(iso);
+  const date = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  const time = d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true, timeZoneName: "short" });
+  return `${date}  ·  ${time}`;
+}
+
 interface AuditDetailPanelProps {
   requestId: string;
   onClose: () => void;
@@ -22,28 +30,36 @@ interface AuditDetailPanelProps {
 const fieldLabel: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 600,
-  color: "#64748b",
+  color: "var(--text-muted)",
   textTransform: "uppercase",
   letterSpacing: "0.05em",
-  marginBottom: 2,
+  marginBottom: 4,
 };
 
 const fieldValue: React.CSSProperties = {
   fontSize: 13,
-  color: "#1e293b",
-  fontFamily: "monospace",
+  color: "var(--text-main)",
+  fontFamily: "var(--font-mono)",
   wordBreak: "break-all",
 };
+
+function outcomeBadgeClass(outcome: string): string {
+  if (outcome === "pass") return "badge badge-green";
+  if (outcome === "block") return "badge badge-red";
+  if (outcome === "flag") return "badge badge-yellow";
+  return "badge badge-gray";
+}
 
 function EventCard({ event }: { event: AuditEvent }) {
   return (
     <div
       style={{
-        background: "#f8fafc",
-        border: "1px solid #e2e8f0",
-        borderRadius: 8,
-        padding: 16,
-        marginBottom: 12,
+        background: "#ffffff",
+        border: "1px solid var(--border-color)",
+        borderRadius: "var(--radius-md)",
+        padding: 20,
+        marginBottom: 16,
+        boxShadow: "var(--shadow-sm)",
       }}
     >
       {/* Header row */}
@@ -52,41 +68,22 @@ function EventCard({ event }: { event: AuditEvent }) {
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          marginBottom: 12,
+          marginBottom: 16,
           flexWrap: "wrap",
-          gap: 8,
+          gap: 12,
         }}
       >
-        <span
-          style={{
-            display: "inline-block",
-            padding: "2px 10px",
-            borderRadius: 12,
-            fontSize: 11,
-            fontWeight: 700,
-            background: "#e0f2fe",
-            color: "#0369a1",
-          }}
-        >
+        <span className="badge badge-violet">
           {event.layer}
         </span>
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            color:
-              event.outcome === "pass"
-                ? "#16a34a"
-                : event.outcome === "block"
-                ? "#dc2626"
-                : "#d97706",
-          }}
-        >
-          {event.outcome.toUpperCase()}
-        </span>
-        <span style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace" }}>
-          {event.timestamp_utc}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span className={outcomeBadgeClass(event.outcome)}>
+            {event.outcome.toUpperCase()}
+          </span>
+          <span style={{ fontSize: 11, color: "var(--text-light)", fontFamily: "var(--font-mono)" }}>
+            {formatTimestamp(event.timestamp_utc)}
+          </span>
+        </div>
       </div>
 
       {/* Detail grid */}
@@ -94,7 +91,7 @@ function EventCard({ event }: { event: AuditEvent }) {
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-          gap: "10px 16px",
+          gap: "12px 16px",
         }}
       >
         <div>
@@ -118,8 +115,8 @@ function EventCard({ event }: { event: AuditEvent }) {
           </div>
         )}
         <div>
-          <div style={fieldLabel}>Latency (ms)</div>
-          <div style={fieldValue}>{event.latency_ms !== null ? event.latency_ms : "—"}</div>
+          <div style={fieldLabel}>Latency</div>
+          <div style={fieldValue}>{event.latency_ms !== null ? `${event.latency_ms} ms` : "—"}</div>
         </div>
         {event.prompt_tokens !== null && (
           <div>
@@ -136,27 +133,20 @@ function EventCard({ event }: { event: AuditEvent }) {
         {event.error_code && (
           <div>
             <div style={fieldLabel}>Error Code</div>
-            <div style={{ ...fieldValue, color: "#dc2626" }}>{event.error_code}</div>
+            <div style={{ ...fieldValue, color: "var(--accent-red-text)", fontWeight: 600 }}>{event.error_code}</div>
           </div>
         )}
       </div>
 
       {/* Arrays */}
       {event.pii_actions.length > 0 && (
-        <div style={{ marginTop: 10 }}>
+        <div style={{ marginTop: 14 }}>
           <div style={fieldLabel}>PII Actions</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
             {event.pii_actions.map((a, i) => (
               <span
                 key={i}
-                style={{
-                  padding: "2px 8px",
-                  background: "#fef3c7",
-                  color: "#92400e",
-                  borderRadius: 4,
-                  fontSize: 11,
-                  fontWeight: 500,
-                }}
+                className="badge badge-yellow"
               >
                 {a}
               </span>
@@ -165,20 +155,13 @@ function EventCard({ event }: { event: AuditEvent }) {
         </div>
       )}
       {event.policy_decisions.length > 0 && (
-        <div style={{ marginTop: 10 }}>
+        <div style={{ marginTop: 14 }}>
           <div style={fieldLabel}>Policy Decisions</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
             {event.policy_decisions.map((d, i) => (
               <span
                 key={i}
-                style={{
-                  padding: "2px 8px",
-                  background: "#f3f4f6",
-                  color: "#374151",
-                  borderRadius: 4,
-                  fontSize: 11,
-                  fontWeight: 500,
-                }}
+                className="badge badge-gray"
               >
                 {d}
               </span>
@@ -238,12 +221,7 @@ export default function AuditDetailPanel({ requestId, onClose }: AuditDetailPane
       {/* Backdrop */}
       <div
         onClick={onClose}
-        style={{
-          position: "fixed",
-          inset: 0,
-          background: "rgba(15, 23, 42, 0.5)",
-          zIndex: 100,
-        }}
+        className="sliding-drawer-backdrop"
         aria-hidden="true"
       />
 
@@ -252,45 +230,23 @@ export default function AuditDetailPanel({ requestId, onClose }: AuditDetailPane
         role="dialog"
         aria-modal="true"
         aria-label={`Audit detail for request ${requestId}`}
-        style={{
-          position: "fixed",
-          top: 0,
-          right: 0,
-          bottom: 0,
-          width: "min(680px, 100vw)",
-          background: "#ffffff",
-          zIndex: 101,
-          display: "flex",
-          flexDirection: "column",
-          boxShadow: "-4px 0 24px rgba(0,0,0,0.15)",
-          overflow: "hidden",
-        }}
+        className="sliding-drawer"
       >
         {/* Header */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            padding: "16px 20px",
-            borderBottom: "1px solid #e2e8f0",
-            background: "#1e293b",
-            gap: 12,
-            flexShrink: 0,
-          }}
-        >
+        <div className="drawer-header">
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 2 }}>
-              Audit Detail — Request ID
+            <div style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
+              Request Audit Detail
             </div>
             <div
               style={{
-                fontFamily: "monospace",
+                fontFamily: "var(--font-mono)",
                 fontSize: 13,
-                color: "#60a5fa",
+                color: "var(--primary)",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
+                fontWeight: 500,
               }}
               title={requestId}
             >
@@ -302,14 +258,29 @@ export default function AuditDetailPanel({ requestId, onClose }: AuditDetailPane
             aria-label="Close detail panel"
             style={{
               background: "none",
-              border: "1px solid #475569",
-              borderRadius: 6,
+              border: "1px solid var(--border-color)",
+              borderRadius: "50%",
               cursor: "pointer",
-              color: "#cbd5e1",
-              fontSize: 18,
+              color: "var(--text-muted)",
+              fontSize: 14,
               lineHeight: 1,
-              padding: "4px 10px",
+              width: 32,
+              height: 32,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
               flexShrink: 0,
+              transition: "all 0.15s ease",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = "var(--primary-light)";
+              e.currentTarget.style.color = "var(--primary)";
+              e.currentTarget.style.borderColor = "var(--primary-border)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = "transparent";
+              e.currentTarget.style.color = "var(--text-muted)";
+              e.currentTarget.style.borderColor = "var(--border-color)";
             }}
           >
             ✕
@@ -317,7 +288,7 @@ export default function AuditDetailPanel({ requestId, onClose }: AuditDetailPane
         </div>
 
         {/* Body */}
-        <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+        <div className="drawer-body">
           {error && (
             <ErrorBanner
               statusCode={error.status}
@@ -329,15 +300,15 @@ export default function AuditDetailPanel({ requestId, onClose }: AuditDetailPane
           {loading && <LoadingSpinner label="Loading request events…" />}
 
           {!loading && !error && events.length === 0 && (
-            <p style={{ color: "#64748b", fontSize: 14, textAlign: "center", paddingTop: 24 }}>
+            <p style={{ color: "var(--text-muted)", fontSize: 14, textAlign: "center", paddingTop: 32 }}>
               No records found for this request.
             </p>
           )}
 
           {!loading && events.length > 0 && (
             <>
-              <p style={{ fontSize: 12, color: "#64748b", marginBottom: 12 }}>
-                {events.length} event{events.length !== 1 ? "s" : ""} across{" "}
+              <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 16, fontWeight: 500 }}>
+                Found {events.length} event{events.length !== 1 ? "s" : ""} across{" "}
                 {new Set(events.map((e) => e.layer)).size} layer
                 {new Set(events.map((e) => e.layer)).size !== 1 ? "s" : ""}
               </p>

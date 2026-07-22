@@ -88,18 +88,8 @@ export default function AuditView() {
   }, [from, to, layer, outcome]);
 
   return (
-    <div style={{ maxWidth: 1200, margin: "0 auto" }}>
-      <h1
-        style={{
-          fontSize: 22,
-          fontWeight: 700,
-          color: "#1e293b",
-          marginBottom: 20,
-          marginTop: 0,
-        }}
-      >
-        Audit Viewer
-      </h1>
+    <div>
+      <h1>Audit Viewer</h1>
 
       {/* Error banner */}
       {error && (
@@ -126,10 +116,12 @@ export default function AuditView() {
       {loading ? (
         <LoadingSpinner label="Loading audit events…" />
       ) : (
-        <AuditTable
-          events={events}
-          onRequestIdClick={(id) => setSelectedRequestId(id)}
-        />
+        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+          <AuditTable
+            events={events}
+            onRequestIdClick={(id) => setSelectedRequestId(id)}
+          />
+        </div>
       )}
 
       {/* Detail panel overlay */}

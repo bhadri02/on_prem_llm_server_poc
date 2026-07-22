@@ -3,50 +3,90 @@ import PlaygroundView from "./views/PlaygroundView";
 import AuditView from "./views/AuditView";
 import ModelView from "./views/ModelView";
 import MetricsView from "./views/MetricsView";
-
-const navStyle: React.CSSProperties = {
-  display: "flex",
-  gap: 24,
-  padding: "12px 24px",
-  background: "#1e293b",
-  alignItems: "center",
-};
-
-const linkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
-  color: isActive ? "#60a5fa" : "#cbd5e1",
-  textDecoration: "none",
-  fontWeight: isActive ? 600 : 400,
-});
+import RbacView from "./views/RbacView";
+import RedactionView from "./views/RedactionView";
+import TokenMetricsView from "./views/TokenMetricsView";
+import ActiveUsersView from "./views/ActiveUsersView";
+import ServerDetailsView from "./views/ServerDetailsView";
+import logo from "./assets/logo.svg";
 
 export default function App() {
   return (
-    <div style={{ fontFamily: "system-ui, sans-serif", minHeight: "100vh", background: "#f8fafc" }}>
-      <nav style={navStyle}>
-        <span style={{ color: "#f1f5f9", fontWeight: 700, marginRight: 16 }}>
-          LLM Platform Portal
-        </span>
-        <NavLink to="/playground" style={linkStyle}>
-          Playground
-        </NavLink>
-        <NavLink to="/audit" style={linkStyle}>
-          Audit
-        </NavLink>
-        <NavLink to="/models" style={linkStyle}>
-          Models
-        </NavLink>
-        <NavLink to="/metrics" style={linkStyle}>
-          Metrics
-        </NavLink>
+    <div className="app-container">
+      <nav className="navbar" style={{ flexWrap: "wrap", height: "auto", minHeight: 64, padding: "8px 24px", gap: "12px 24px" }}>
+        <div className="navbar-brand">
+          <img
+            src={logo}
+            alt="GWC Logo"
+            style={{ height: 28, width: "auto", display: "block" }}
+          />
+          <span>GWC Private AI</span>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <NavLink
+            to="/playground"
+            className={({ isActive }) => `navbar-link${isActive ? " active" : ""}`}
+          >
+            Playground
+          </NavLink>
+          <NavLink
+            to="/audit"
+            className={({ isActive }) => `navbar-link${isActive ? " active" : ""}`}
+          >
+            Audit
+          </NavLink>
+          <NavLink
+            to="/models"
+            className={({ isActive }) => `navbar-link${isActive ? " active" : ""}`}
+          >
+            Models
+          </NavLink>
+          <NavLink
+            to="/rbac"
+            className={({ isActive }) => `navbar-link${isActive ? " active" : ""}`}
+          >
+            Access Control (RBAC)
+          </NavLink>
+          <NavLink
+            to="/redaction"
+            className={({ isActive }) => `navbar-link${isActive ? " active" : ""}`}
+          >
+            Data Redump
+          </NavLink>
+          <NavLink
+            to="/token-metrics"
+            className={({ isActive }) => `navbar-link${isActive ? " active" : ""}`}
+          >
+            Token Consumption
+          </NavLink>
+          <NavLink
+            to="/active-users"
+            className={({ isActive }) => `navbar-link${isActive ? " active" : ""}`}
+          >
+            Active Users
+          </NavLink>
+          <NavLink
+            to="/server-details"
+            className={({ isActive }) => `navbar-link${isActive ? " active" : ""}`}
+          >
+            Server Details
+          </NavLink>
+        </div>
       </nav>
-      <main style={{ padding: 24 }}>
+      <main className="main-content">
         <Routes>
           <Route path="/" element={<Navigate to="/playground" replace />} />
           <Route path="/playground" element={<PlaygroundView />} />
           <Route path="/audit" element={<AuditView />} />
           <Route path="/models" element={<ModelView />} />
-          <Route path="/metrics" element={<MetricsView />} />
+          <Route path="/rbac" element={<RbacView />} />
+          <Route path="/redaction" element={<RedactionView />} />
+          <Route path="/token-metrics" element={<TokenMetricsView />} />
+          <Route path="/active-users" element={<ActiveUsersView />} />
+          <Route path="/server-details" element={<ServerDetailsView />} />
         </Routes>
       </main>
     </div>
   );
 }
+

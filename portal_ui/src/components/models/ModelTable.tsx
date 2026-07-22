@@ -20,6 +20,13 @@
 import type { ModelRecord } from "../../types";
 import StatusBadge from "./StatusBadge";
 
+// Import local brand logo assets
+import metaLogo from "../../assets/meta.svg";
+import mistralLogo from "../../assets/mistral.svg";
+import googleLogo from "../../assets/google.svg";
+import qwenLogo from "../../assets/qwen.svg";
+import ollamaLogo from "../../assets/ollama.svg";
+
 interface ModelTableProps {
   models: ModelRecord[];
   loading: boolean;
@@ -28,21 +35,45 @@ interface ModelTableProps {
   onDismissError: () => void;
 }
 
-const CELL_STYLE: React.CSSProperties = {
-  padding: "10px 14px",
-  borderBottom: "1px solid #f1f5f9",
-  verticalAlign: "top",
-};
+function getCompanyLogo(backend: string) {
+  const b = backend.toLowerCase();
+  let src = "";
+  let alt = "";
 
-const HEADER_STYLE: React.CSSProperties = {
-  ...CELL_STYLE,
-  background: "#f8fafc",
-  fontWeight: 600,
-  color: "#475569",
-  fontSize: 13,
-  borderBottom: "1px solid #e5e7eb",
-  textAlign: "left",
-};
+  if (b.includes("meta")) {
+    src = metaLogo;
+    alt = "Meta";
+  } else if (b.includes("mistral")) {
+    src = mistralLogo;
+    alt = "Mistral";
+  } else if (b.includes("google")) {
+    src = googleLogo;
+    alt = "Google";
+  } else if (b.includes("alibaba") || b.includes("qwen")) {
+    src = qwenLogo;
+    alt = "Alibaba / Qwen";
+  } else if (b.includes("ollama")) {
+    src = ollamaLogo;
+    alt = "Ollama";
+  } else {
+    return null;
+  }
+
+  return (
+    <img
+      src={src}
+      alt={`${alt} logo`}
+      style={{
+        width: 18,
+        height: 18,
+        marginRight: 10,
+        display: "inline-block",
+        verticalAlign: "middle",
+        flexShrink: 0,
+      }}
+    />
+  );
+}
 
 export default function ModelTable({
   models,
@@ -52,135 +83,196 @@ export default function ModelTable({
   onDismissError,
 }: ModelTableProps) {
   return (
-    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-      <thead>
-        <tr>
-          <th style={HEADER_STYLE}>Name</th>
-          <th style={HEADER_STYLE}>Version</th>
-          <th style={HEADER_STYLE}>Backend</th>
-          <th style={HEADER_STYLE}>Tasks</th>
-          <th style={HEADER_STYLE}>Status</th>
-          <th style={HEADER_STYLE}>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {models.length === 0 ? (
+    <div className="table-container" style={{ border: "none", borderRadius: 0, boxShadow: "none" }}>
+      <table className="table">
+        <thead>
           <tr>
-            <td
-              colSpan={6}
-              style={{
-                ...CELL_STYLE,
-                textAlign: "center",
-                color: "#94a3b8",
-                padding: "24px 14px",
-              }}
-            >
-              No models found.
-            </td>
+            <th>Name</th>
+            <th>Version</th>
+            <th>Provider</th>
+            <th>Size</th>
+            <th>Context</th>
+            <th>Tasks</th>
+            <th>Status</th>
+            <th>Actions</th>
           </tr>
-        ) : (
-          models.map((model) => {
-            const rowError =
-              actionError && actionError.name === model.name ? actionError : null;
+        </thead>
+        <tbody>
+          {models.length === 0 ? (
+            <tr>
+              <td
+                colSpan={8}
+                style={{
+                  textAlign: "center",
+                  color: "var(--text-muted)",
+                  padding: "32px 16px",
+                }}
+              >
+                No models found.
+              </td>
+            </tr>
+          ) : (
+            models.map((model) => {
+              const rowError =
+                actionError && actionError.name === model.name ? actionError : null;
 
-            return (
-              <tr key={model.name}>
-                <td style={CELL_STYLE}>
-                  <span style={{ fontWeight: 600, color: "#1e293b" }}>{model.name}</span>
-                </td>
-                <td style={{ ...CELL_STYLE, color: "#475569" }}>{model.version}</td>
-                <td style={{ ...CELL_STYLE, color: "#475569" }}>{model.backend}</td>
-                <td style={{ ...CELL_STYLE, color: "#475569" }}>
-                  {model.tasks.join(", ")}
-                </td>
-                <td style={CELL_STYLE}>
-                  <StatusBadge status={model.status} />
-                </td>
-                <td style={CELL_STYLE}>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      {/* [Activate] — shown for retired and staging */}
-                      {(model.status === "retired" || model.status === "staging") && (
-                        <button
-                          disabled={loading}
-                          onClick={() => onAction(model.name, "activate")}
+              return (
+                <tr key={model.name}>
+                  <td>
+                    <div style={{ display: "flex", alignItems: "center" }}>
+                      {getCompanyLogo(model.backend)}
+                      <span style={{ fontWeight: 600, color: "var(--text-main)" }}>{model.name}</span>
+                    </div>
+                  </td>
+                  <td style={{ color: "var(--text-muted)" }}>{model.version}</td>
+                  <td style={{ color: "var(--text-muted)", textTransform: "capitalize" }}>{model.backend}</td>
+                  <td style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 12.5 }}>{model.size || "8B"}</td>
+                  <td style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 12.5 }}>{model.contextWindow || "8k"}</td>
+                  <td style={{ color: "var(--text-muted)" }}>
+                    {model.tasks.join(", ")}
+                  </td>
+                  <td>
+                    <StatusBadge status={model.status} />
+                  </td>
+                  <td>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                        {/* Activate Toggle switch (shown for retired and staging) */}
+                        {(model.status === "retired" || model.status === "staging") && (
+                          <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            {model.status === "staging" && <span style={{ fontSize: 10.5, color: "var(--text-light)" }}>Activate:</span>}
+                            <button
+                              disabled={loading}
+                              onClick={() => onAction(model.name, "activate")}
+                              aria-label="Activate"
+                              style={{
+                                background: "none",
+                                border: "none",
+                                cursor: loading ? "not-allowed" : "pointer",
+                                padding: 0,
+                                display: "inline-flex",
+                                alignItems: "center",
+                              }}
+                            >
+                              <span style={{ display: "none" }}>Activate</span>
+                              <div
+                                style={{
+                                  width: 40,
+                                  height: 20,
+                                  borderRadius: 10,
+                                  backgroundColor: "#d1d5db",
+                                  position: "relative",
+                                  transition: "background-color 0.2s",
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    position: "absolute",
+                                    top: 2,
+                                    left: 2,
+                                    width: 16,
+                                    height: 16,
+                                    borderRadius: "50%",
+                                    backgroundColor: "#ffffff",
+                                    boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                                    transition: "left 0.2s",
+                                  }}
+                                />
+                              </div>
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Retire Toggle switch (shown for active and staging) */}
+                        {(model.status === "active" || model.status === "staging") && (
+                          <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            {model.status === "staging" && <span style={{ fontSize: 10.5, color: "var(--text-light)" }}>Retire:</span>}
+                            <button
+                              disabled={loading}
+                              onClick={() => onAction(model.name, "retire")}
+                              aria-label="Retire"
+                              style={{
+                                background: "none",
+                                border: "none",
+                                cursor: loading ? "not-allowed" : "pointer",
+                                padding: 0,
+                                display: "inline-flex",
+                                alignItems: "center",
+                              }}
+                            >
+                              <span style={{ display: "none" }}>Retire</span>
+                              <div
+                                style={{
+                                  width: 40,
+                                  height: 20,
+                                  borderRadius: 10,
+                                  backgroundColor: "var(--primary)",
+                                  position: "relative",
+                                  transition: "background-color 0.2s",
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    position: "absolute",
+                                    top: 2,
+                                    left: 22,
+                                    width: 16,
+                                    height: 16,
+                                    borderRadius: "50%",
+                                    backgroundColor: "#ffffff",
+                                    boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                                    transition: "left 0.2s",
+                                  }}
+                                />
+                              </div>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Inline per-row action error */}
+                      {rowError && (
+                        <div
                           style={{
-                            cursor: loading ? "not-allowed" : "pointer",
-                            border: "none",
-                            padding: "4px 12px",
-                            borderRadius: 4,
-                            fontSize: 12,
-                            background: loading ? "#bbf7d0" : "#22c55e",
-                            color: "#fff",
-                            opacity: loading ? 0.6 : 1,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            backgroundColor: "var(--accent-red-bg)",
+                            border: "1px solid var(--accent-red-border)",
+                            borderRadius: 6,
+                            padding: "6px 10px",
+                            fontSize: 11.5,
+                            color: "var(--accent-red-text)",
+                            marginTop: 4,
                           }}
                         >
-                          Activate
-                        </button>
-                      )}
-
-                      {/* [Retire] — shown for active and staging */}
-                      {(model.status === "active" || model.status === "staging") && (
-                        <button
-                          disabled={loading}
-                          onClick={() => onAction(model.name, "retire")}
-                          style={{
-                            cursor: loading ? "not-allowed" : "pointer",
-                            border: "none",
-                            padding: "4px 12px",
-                            borderRadius: 4,
-                            fontSize: 12,
-                            background: loading ? "#cbd5e1" : "#94a3b8",
-                            color: "#fff",
-                            opacity: loading ? 0.6 : 1,
-                          }}
-                        >
-                          Retire
-                        </button>
+                          <span style={{ flex: 1, fontWeight: 500 }}>{rowError.message}</span>
+                          <button
+                            onClick={onDismissError}
+                            aria-label="Dismiss error"
+                            style={{
+                              background: "none",
+                              border: "none",
+                              cursor: "pointer",
+                              fontSize: 12,
+                              color: "var(--accent-red-text)",
+                              padding: 0,
+                              lineHeight: 1,
+                              fontWeight: "bold",
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </div>
                       )}
                     </div>
-
-                    {/* Inline per-row action error */}
-                    {rowError && (
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          background: "#fee2e2",
-                          border: "1px solid #fca5a5",
-                          borderRadius: 4,
-                          padding: "3px 8px",
-                          fontSize: 11,
-                          color: "#b91c1c",
-                          marginTop: 2,
-                        }}
-                      >
-                        <span style={{ flex: 1 }}>{rowError.message}</span>
-                        <button
-                          onClick={onDismissError}
-                          aria-label="Dismiss error"
-                          style={{
-                            background: "none",
-                            border: "none",
-                            cursor: "pointer",
-                            fontSize: 12,
-                            color: "#b91c1c",
-                            padding: 0,
-                            lineHeight: 1,
-                          }}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            );
-          })
-        )}
-      </tbody>
-    </table>
+                  </td>
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }

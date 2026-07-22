@@ -37,10 +37,10 @@ export default function TemperatureInput({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+    <div className="form-group">
       <label
         htmlFor="temperature-input"
-        style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}
+        className="form-label"
       >
         Temperature
       </label>
@@ -57,14 +57,10 @@ export default function TemperatureInput({
         aria-label="Temperature"
         aria-describedby={isOutOfRange ? "temperature-error" : undefined}
         aria-invalid={isOutOfRange}
+        className="form-input"
         style={{
-          padding: "6px 10px",
-          borderRadius: 6,
-          border: isOutOfRange ? "1px solid #ef4444" : "1px solid #d1d5db",
-          fontSize: 14,
-          width: 90,
-          background: disabled ? "#f3f4f6" : "#ffffff",
-          cursor: disabled ? "not-allowed" : "text",
+          width: 100,
+          borderColor: isOutOfRange ? "var(--accent-red-text)" : undefined,
         }}
       />
 
@@ -72,7 +68,8 @@ export default function TemperatureInput({
         <p
           id="temperature-error"
           role="alert"
-          style={{ color: "#b91c1c", fontSize: 12, margin: 0 }}
+          className="badge badge-red"
+          style={{ margin: 0, marginTop: 4, display: "inline-block", alignSelf: "flex-start" }}
         >
           Temperature must be between {MIN.toFixed(1)} and {MAX.toFixed(1)}.
         </p>

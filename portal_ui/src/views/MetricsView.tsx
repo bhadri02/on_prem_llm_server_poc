@@ -76,7 +76,7 @@ export default function MetricsView() {
   if (state.phase === "error") {
     return (
       <div>
-        <h2 style={headingStyle}>Metrics</h2>
+        <h1>Metrics</h1>
         <ErrorBanner
           statusCode={state.statusCode}
           message={state.message}
@@ -99,27 +99,27 @@ export default function MetricsView() {
 
   return (
     <div>
-      <h2 style={headingStyle}>Metrics</h2>
+      <h1>Metrics</h1>
 
       {iframeError || isLocalDefault ? (
         // Fallback replaces the iframe area (Req 9.5, 12.5)
         <div
           role="status"
           aria-live="polite"
-          style={fallbackStyle}
+          className="metrics-fallback"
           data-testid="grafana-fallback"
         >
-          <span style={{ fontSize: 40, marginBottom: 16 }}>📊</span>
-          <p style={{ margin: 0, fontWeight: 600, fontSize: 16 }}>
+          <span className="metrics-fallback-icon">📊</span>
+          <p style={{ margin: 0, fontWeight: 700, fontSize: 18, color: "var(--primary-text)" }}>
             Grafana dashboard not available in local mode
           </p>
-          <p style={{ margin: "10px 0 0", color: "#6b7280", fontSize: 14, maxWidth: 480, textAlign: "center" }}>
+          <p style={{ margin: "14px 0 0", color: "var(--text-muted)", fontSize: 14.5, maxWidth: 520, lineHeight: 1.5 }}>
             The Metrics tab embeds a Grafana dashboard which requires the full
             Docker/K8s stack. In local dev mode only Prometheus and Grafana
             running via <code>docker-compose</code> would populate this view.
           </p>
-          <p style={{ margin: "12px 0 0", color: "#6b7280", fontSize: 13 }}>
-            Expected URL: <code>{state.grafanaUrl}</code>
+          <p style={{ margin: "16px 0 0", color: "var(--text-muted)", fontSize: 13 }}>
+            Expected URL: <code style={{ fontFamily: "var(--font-mono)", background: "#ffffff", padding: "3px 8px", borderRadius: 4, border: "1px solid var(--primary-border)" }}>{state.grafanaUrl}</code>
           </p>
         </div>
       ) : (
@@ -127,7 +127,13 @@ export default function MetricsView() {
           src={iframeSrc}
           title="LLM Platform Grafana Dashboard"
           width="100%"
-          style={iframeStyle}
+          style={{
+            minHeight: 600,
+            border: "1px solid var(--border-color)",
+            borderRadius: "var(--radius-lg)",
+            display: "block",
+            boxShadow: "var(--shadow-md)",
+          }}
           frameBorder={0}
           onError={() => setIframeError(true)}
           data-testid="grafana-iframe"
@@ -136,36 +142,3 @@ export default function MetricsView() {
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
-
-const headingStyle: React.CSSProperties = {
-  marginTop: 0,
-  marginBottom: 16,
-  fontSize: 20,
-  fontWeight: 600,
-  color: "#1e293b",
-};
-
-const iframeStyle: React.CSSProperties = {
-  minHeight: 600,
-  border: "none",
-  borderRadius: 6,
-  display: "block",
-};
-
-const fallbackStyle: React.CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  justifyContent: "center",
-  minHeight: 600,
-  border: "2px dashed #d1d5db",
-  borderRadius: 6,
-  padding: 32,
-  textAlign: "center",
-  color: "#374151",
-  background: "#f9fafb",
-};

@@ -40,7 +40,10 @@ export interface ModelRecord {
   version: string;
   backend: string;
   tasks: string[];
-  status: "active" | "retired" | "staging";
+  status: "active" | "retired" | "staging" | "pending";
+  size?: string;
+  contextWindow?: string;
+  license?: string;
 }
 
 export interface MetricsSummary {

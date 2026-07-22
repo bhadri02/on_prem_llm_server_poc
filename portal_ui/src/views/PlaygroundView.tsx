@@ -76,6 +76,7 @@ export default function PlaygroundView() {
   const navigate = useNavigate();
 
   const [selectedModel, setSelectedModel] = useState<string>("");
+  const [actualModel, setActualModel] = useState<string>("");
   const [temperature, setTemperature] = useState<number>(DEFAULT_TEMPERATURE);
   const [chatResponse, setChatResponse] = useState<{
     content: string;
@@ -99,7 +100,7 @@ export default function PlaygroundView() {
 
     try {
       const raw = await portalClient.postChat({
-        model: selectedModel,
+        model: actualModel || selectedModel,
         messages: [{ role: "user", content: message }],
         temperature,
       });
@@ -124,18 +125,8 @@ export default function PlaygroundView() {
   }
 
   return (
-    <div
-      style={{
-        maxWidth: 760,
-        margin: "0 auto",
-        display: "flex",
-        flexDirection: "column",
-        gap: 20,
-      }}
-    >
-      <h1 style={{ fontSize: 22, fontWeight: 700, color: "#1e293b", margin: 0 }}>
-        Playground
-      </h1>
+    <div className="playground-layout">
+      <h1>Playground</h1>
 
       {/* Error banner — displayed when postChat fails */}
       {error && (
@@ -148,19 +139,19 @@ export default function PlaygroundView() {
 
       {/* Controls row: model selector + temperature */}
       <div
+        className="card"
         style={{
           display: "flex",
-          gap: 24,
+          gap: 32,
           flexWrap: "wrap",
           alignItems: "flex-start",
-          background: "#ffffff",
-          border: "1px solid #e5e7eb",
-          borderRadius: 8,
-          padding: "16px 20px",
         }}
       >
         <ModelSelector
-          onModelChange={setSelectedModel}
+          onModelChange={(sel, act) => {
+            setSelectedModel(sel);
+            setActualModel(act);
+          }}
           onLoadError={setModelLoadError}
           disabled={inFlight}
         />
@@ -173,14 +164,7 @@ export default function PlaygroundView() {
       </div>
 
       {/* Chat window */}
-      <div
-        style={{
-          background: "#ffffff",
-          border: "1px solid #e5e7eb",
-          borderRadius: 8,
-          padding: "16px 20px",
-        }}
-      >
+      <div className="card">
         <ChatWindow
           disabled={sendDisabled}
           isLoading={inFlight}

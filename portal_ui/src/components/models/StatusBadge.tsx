@@ -18,29 +18,19 @@ interface StatusBadgeProps {
 
 const STATUS_STYLES: Record<
   ModelRecord["status"],
-  { background: string; color: string; label: string }
+  { className: string; background: string; color: string; label: string }
 > = {
-  active: { background: "#dcfce7", color: "#15803d", label: "Active" },
-  staging: { background: "#fef9c3", color: "#854d0e", label: "Staging" },
-  retired: { background: "#f1f5f9", color: "#64748b", label: "Retired" },
+  active: { className: "badge badge-green", background: "rgb(220, 252, 231)", color: "rgb(21, 128, 61)", label: "Active" },
+  staging: { className: "badge badge-yellow", background: "rgb(254, 249, 195)", color: "rgb(133, 77, 14)", label: "Staging" },
+  retired: { className: "badge badge-gray", background: "rgb(241, 245, 249)", color: "rgb(100, 116, 139)", label: "Retired" },
+  pending: { className: "badge badge-yellow", background: "rgba(245, 158, 11, 0.15)", color: "rgb(180, 83, 9)", label: "Pending" },
 };
 
 export default function StatusBadge({ status }: StatusBadgeProps) {
-  const { background, color, label } = STATUS_STYLES[status];
+  const { className, background, color, label } = STATUS_STYLES[status];
 
   return (
-    <span
-      style={{
-        display: "inline-block",
-        padding: "2px 10px",
-        borderRadius: 12,
-        fontWeight: 600,
-        fontSize: 12,
-        background,
-        color,
-        whiteSpace: "nowrap",
-      }}
-    >
+    <span className={className} style={{ background, color }}>
       {label}
     </span>
   );

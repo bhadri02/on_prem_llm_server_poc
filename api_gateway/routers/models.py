@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 router = APIRouter()
 
 # POC: static model list — extend or make configurable in Phase 2
-STATIC_MODELS: list[str] = ["llama3", "mistral", "phi3"]
+STATIC_MODELS: list[str] = ["llama3"]
 
 
 @router.get("/v1/models")
