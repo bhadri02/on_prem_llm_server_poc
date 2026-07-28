@@ -281,6 +281,7 @@ async def run_routing_pipeline(
                         _build_fallback_audit(imf, fallback, "fallback", _ms(t0)),
                         state.settings.audit_store_url,
                         state.http_client,
+                        state.settings.audit_api_key,
                     )
                     continue
                 else:
@@ -290,6 +291,7 @@ async def run_routing_pipeline(
                         _build_routing_audit(imf, "error", _ms(t0)),
                         state.settings.audit_store_url,
                         state.http_client,
+                        state.settings.audit_api_key,
                     )
                     return PipelineResult(
                         success=False,
@@ -309,6 +311,7 @@ async def run_routing_pipeline(
                 request_id,
                 state.settings.cache_url,
                 state.http_client,
+                full_imf=imf,
             )
 
             lookup_hit = bool(cache_response.get("hit"))
@@ -337,6 +340,7 @@ async def run_routing_pipeline(
                         _build_cache_hit_audit(imf, _ms(t0)),
                         state.settings.audit_store_url,
                         state.http_client,
+                        state.settings.audit_api_key,
                     )
                     return PipelineResult(
                         success=True,
@@ -386,6 +390,7 @@ async def run_routing_pipeline(
                     _build_fallback_audit(imf, fallback, "fallback", _ms(t0)),
                     state.settings.audit_store_url,
                     state.http_client,
+                    state.settings.audit_api_key,
                 )
 
                 if next_model is not None:
@@ -423,6 +428,7 @@ async def run_routing_pipeline(
                 _build_routing_audit(imf, "pass", _ms(t0)),
                 state.settings.audit_store_url,
                 state.http_client,
+                state.settings.audit_api_key,
             )
 
             return PipelineResult(

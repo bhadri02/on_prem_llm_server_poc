@@ -34,11 +34,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from inference_adapter.config import get_settings
-from inference_adapter.metrics import (
-    llm_inference_errors_total,
-    llm_inference_latency_seconds,
-    llm_inference_requests_total,
-)
+from inference_adapter.metrics import LAYER_METRICS
 from inference_adapter.schemas.imf import IMFDocument
 from inference_adapter.services.imf_mapper import IMFMapper
 from inference_adapter.services.ollama_client import (
@@ -100,12 +96,12 @@ async def infer(imf: IMFDocument, request: Request) -> JSONResponse:
     # Validation: routing.selected_model must be present and non-null
     # ------------------------------------------------------------------
     if not imf.routing.selected_model:
-        llm_inference_requests_total.labels(
+        LAYER_METRICS.record_request(
             status="error",
-            model=model_label,
-            task_type=task_type_label,
             department=department_label,
-        ).inc()
+            model=model_label,
+            latency_s=0.0,
+        )
         return JSONResponse(
             status_code=422,
             content={
@@ -121,12 +117,12 @@ async def infer(imf: IMFDocument, request: Request) -> JSONResponse:
     # Validation: request.messages must be present and non-empty
     # ------------------------------------------------------------------
     if not imf.request.messages:
-        llm_inference_requests_total.labels(
+        LAYER_METRICS.record_request(
             status="error",
-            model=model_label,
-            task_type=task_type_label,
             department=department_label,
-        ).inc()
+            model=model_label,
+            latency_s=0.0,
+        )
         return JSONResponse(
             status_code=422,
             content={
@@ -140,12 +136,12 @@ async def infer(imf: IMFDocument, request: Request) -> JSONResponse:
     # ------------------------------------------------------------------
     ollama_models: list[str] = request.app.state.ollama_models
     if imf.routing.selected_model not in ollama_models:
-        llm_inference_requests_total.labels(
+        LAYER_METRICS.record_request(
             status="error",
-            model=model_label,
-            task_type=task_type_label,
             department=department_label,
-        ).inc()
+            model=model_label,
+            latency_s=0.0,
+        )
         return JSONResponse(
             status_code=422,
             content={
@@ -208,22 +204,16 @@ async def infer(imf: IMFDocument, request: Request) -> JSONResponse:
                 "latency_ms": latency_ms,
             }
         )
-        llm_inference_errors_total.labels(
+        LAYER_METRICS.record_error(
             error_code="ollama_unreachable",
-            model=model_label,
             department=department_label,
-        ).inc()
-        llm_inference_latency_seconds.labels(
-            model=model_label,
-            task_type=task_type_label,
-            department=department_label,
-        ).observe(latency_ms / 1000.0)
-        llm_inference_requests_total.labels(
+        )
+        LAYER_METRICS.record_request(
             status="error",
-            model=model_label,
-            task_type=task_type_label,
             department=department_label,
-        ).inc()
+            model=model_label,
+            latency_s=latency_ms / 1000.0,
+        )
         return JSONResponse(
             status_code=503,
             content={
@@ -244,22 +234,16 @@ async def infer(imf: IMFDocument, request: Request) -> JSONResponse:
                 "latency_ms": latency_ms,
             }
         )
-        llm_inference_errors_total.labels(
+        LAYER_METRICS.record_error(
             error_code="ollama_error_response",
-            model=model_label,
             department=department_label,
-        ).inc()
-        llm_inference_latency_seconds.labels(
-            model=model_label,
-            task_type=task_type_label,
-            department=department_label,
-        ).observe(latency_ms / 1000.0)
-        llm_inference_requests_total.labels(
+        )
+        LAYER_METRICS.record_request(
             status="error",
-            model=model_label,
-            task_type=task_type_label,
             department=department_label,
-        ).inc()
+            model=model_label,
+            latency_s=latency_ms / 1000.0,
+        )
         return JSONResponse(
             status_code=422,
             content={
@@ -280,22 +264,16 @@ async def infer(imf: IMFDocument, request: Request) -> JSONResponse:
                 "latency_ms": latency_ms,
             }
         )
-        llm_inference_errors_total.labels(
+        LAYER_METRICS.record_error(
             error_code="ollama_error_response",
-            model=model_label,
             department=department_label,
-        ).inc()
-        llm_inference_latency_seconds.labels(
-            model=model_label,
-            task_type=task_type_label,
-            department=department_label,
-        ).observe(latency_ms / 1000.0)
-        llm_inference_requests_total.labels(
+        )
+        LAYER_METRICS.record_request(
             status="error",
-            model=model_label,
-            task_type=task_type_label,
             department=department_label,
-        ).inc()
+            model=model_label,
+            latency_s=latency_ms / 1000.0,
+        )
         return JSONResponse(
             status_code=502,
             content={
@@ -316,22 +294,16 @@ async def infer(imf: IMFDocument, request: Request) -> JSONResponse:
                 "latency_ms": latency_ms,
             }
         )
-        llm_inference_errors_total.labels(
+        LAYER_METRICS.record_error(
             error_code="ollama_unparseable_body",
-            model=model_label,
             department=department_label,
-        ).inc()
-        llm_inference_latency_seconds.labels(
-            model=model_label,
-            task_type=task_type_label,
-            department=department_label,
-        ).observe(latency_ms / 1000.0)
-        llm_inference_requests_total.labels(
+        )
+        LAYER_METRICS.record_request(
             status="error",
-            model=model_label,
-            task_type=task_type_label,
             department=department_label,
-        ).inc()
+            model=model_label,
+            latency_s=latency_ms / 1000.0,
+        )
         return JSONResponse(
             status_code=502,
             content={
@@ -343,12 +315,12 @@ async def infer(imf: IMFDocument, request: Request) -> JSONResponse:
     # ---- Unhandled exception -----------------------------------------
     except Exception:
         latency_ms = (time.monotonic_ns() - start_ns) // 1_000_000
-        llm_inference_requests_total.labels(
+        LAYER_METRICS.record_request(
             status="error",
-            model=model_label,
-            task_type=task_type_label,
             department=department_label,
-        ).inc()
+            model=model_label,
+            latency_s=latency_ms / 1000.0,
+        )
         return JSONResponse(
             status_code=500,
             content={
@@ -381,17 +353,12 @@ async def infer(imf: IMFDocument, request: Request) -> JSONResponse:
     )
 
     # Update Prometheus metrics (success)
-    llm_inference_latency_seconds.labels(
-        model=model_label,
-        task_type=task_type_label,
-        department=department_label,
-    ).observe(latency_ms / 1000.0)
-    llm_inference_requests_total.labels(
+    LAYER_METRICS.record_request(
         status="success",
-        model=model_label,
-        task_type=task_type_label,
         department=department_label,
-    ).inc()
+        model=model_label,
+        latency_s=latency_ms / 1000.0,
+    )
 
     return JSONResponse(
         status_code=200,

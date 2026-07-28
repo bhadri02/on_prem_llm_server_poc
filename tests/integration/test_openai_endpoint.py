@@ -78,7 +78,7 @@ INFERENCE_RESPONSE_BODY = {
         "policy_decisions": [],
     },
     "routing": {
-        "selected_model": "llama3.2-3b",
+        "selected_model": "llama3.2:3b",
         "routing_mode": "auto",
         "fallback_level": 0,
     },
@@ -116,7 +116,7 @@ def _make_settings() -> MagicMock:
 def _make_matrix() -> ModelMatrix:
     """Return a minimal single-model ModelMatrix matching model_matrix.yaml."""
     entry = ModelEntry(
-        name="llama3.2-3b",
+        name="llama3.2:3b",
         backend="ollama",
         endpoint="http://inference-ollama:11434",
         tasks=["chat", "code", "reasoning", "summarization", "translation"],
@@ -124,13 +124,13 @@ def _make_matrix() -> ModelMatrix:
         fallback=None,
     )
     return ModelMatrix(
-        models={"llama3.2-3b": entry},
+        models={"llama3.2:3b": entry},
         task_defaults={
-            "chat": "llama3.2-3b",
-            "code": "llama3.2-3b",
-            "reasoning": "llama3.2-3b",
-            "summarization": "llama3.2-3b",
-            "translation": "llama3.2-3b",
+            "chat": "llama3.2:3b",
+            "code": "llama3.2:3b",
+            "reasoning": "llama3.2:3b",
+            "summarization": "llama3.2:3b",
+            "translation": "llama3.2:3b",
         },
     )
 
@@ -242,7 +242,7 @@ async def test_happy_path_auto_routing(httpx_mock: HTTPXMock):
 
 @pytest.mark.anyio
 async def test_pinned_mode_selects_correct_model(httpx_mock: HTTPXMock):
-    """model field present → routing_mode=pinned → llama3.2-3b selected → HTTP 200.
+    """model field present → routing_mode=pinned → llama3.2:3b selected → HTTP 200.
 
     Validates: Requirements 9.2, 9.4
     """
@@ -253,7 +253,7 @@ async def test_pinned_mode_selects_correct_model(httpx_mock: HTTPXMock):
     pinned_inference_response = {**INFERENCE_RESPONSE_BODY}
     pinned_inference_response = dict(INFERENCE_RESPONSE_BODY)
     pinned_inference_response["routing"] = {
-        "selected_model": "llama3.2-3b",
+        "selected_model": "llama3.2:3b",
         "routing_mode": "pinned",
         "fallback_level": 0,
     }
@@ -270,7 +270,7 @@ async def test_pinned_mode_selects_correct_model(httpx_mock: HTTPXMock):
         resp = await client.post(
             "/v1/chat/completions",
             json={
-                "model": "llama3.2-3b",
+                "model": "llama3.2:3b",
                 "messages": [{"role": "user", "content": "Hello from pinned mode!"}],
             },
         )
@@ -281,8 +281,8 @@ async def test_pinned_mode_selects_correct_model(httpx_mock: HTTPXMock):
     body = resp.json()
 
     # The selected model in the response must be the pinned model
-    assert body["model"] == "llama3.2-3b", (
-        f"Expected model='llama3.2-3b', got {body['model']!r}"
+    assert body["model"] == "llama3.2:3b", (
+        f"Expected model='llama3.2:3b', got {body['model']!r}"
     )
     assert body["choices"][0]["message"]["content"] is not None
 

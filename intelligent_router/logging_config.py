@@ -10,6 +10,11 @@ Provides:
   - get_logger(name): factory that returns a configured Logger writing to
     sys.stdout, with the log level set from settings.log_level (defaults to
     INFO for unrecognised values).
+
+Note: `configure_structlog("router", ...)` is called in main.py at module
+level to ensure the shared structlog is available globally (Requirements 6.1–6.6).
+This module keeps its own JSONFormatter/get_logger for backward compatibility
+with existing call-sites and tests.
 """
 
 import json

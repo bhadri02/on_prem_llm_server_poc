@@ -238,8 +238,8 @@ async def test_valid_config_sets_app_state(tmp_path):
                 "app.state.http_client must be set after successful startup"
             )
             # Spot-check loaded content
-            assert "llama3.2-3b" in app.state.model_matrix.models, (
-                "model_matrix must contain the llama3.2-3b entry from model_matrix.yaml"
+            assert "llama3.2:3b" in app.state.model_matrix.models, (
+                "model_matrix must contain the llama3.2:3b entry from model_matrix.yaml"
             )
             assert app.state.classifier_rules.total_keyword_count > 0, (
                 "classifier_rules must have at least one keyword loaded"

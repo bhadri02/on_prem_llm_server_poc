@@ -27,6 +27,7 @@ async def post_audit_event(
     event: dict,
     audit_store_url: str,
     http_client: httpx.AsyncClient,
+    api_key: str = "",
 ) -> None:
     """Non-blocking audit write. Failures are logged as WARNING, never raised.
 
@@ -34,12 +35,14 @@ async def post_audit_event(
         event:           The audit event payload to POST as JSON.
         audit_store_url: Base URL of the Audit Store (e.g. "http://audit-store:9200").
         http_client:     Shared httpx.AsyncClient; caller manages its lifecycle.
+        api_key:         X-API-Key header value for the Audit Store.
     """
     request_id = event.get("request_id")
     try:
         resp = await http_client.post(
             f"{audit_store_url}/audit/events",
             json=event,
+            headers={"X-API-Key": api_key},
             timeout=AUDIT_TIMEOUT,
         )
         if resp.status_code >= 300:

@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"         # LOG_LEVEL
     pii_enabled: bool = True        # PII_ENABLED (default true)
 
+    # ── Distributed tracing (opt-in, disabled by default for POC) ──────────
+    tracing_enabled: bool = False   # TRACING_ENABLED
+    otel_endpoint: str = "http://otel-collector:4317"  # OTEL_ENDPOINT
+
     @field_validator("pii_enabled", mode="before")
     @classmethod
     def validate_pii_enabled(cls, v: object) -> object:

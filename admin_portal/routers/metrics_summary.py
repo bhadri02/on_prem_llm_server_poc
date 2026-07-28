@@ -23,6 +23,7 @@ Validates: Requirements 8.1, 8.2, 8.3
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Optional
 
@@ -151,12 +152,11 @@ async def get_metrics_summary() -> Response:
 
     async with httpx.AsyncClient(timeout=_PROMETHEUS_TIMEOUT) as client:
         try:
-            # --- Req 8.1: Issue all four queries ----------------------------
-            r_request_rate, r_error_num, r_cache_hits, r_cache_total = (
-                await _query(client, prom_base, _QUERY_REQUEST_RATE),
-                await _query(client, prom_base, _QUERY_ERROR_RATE_NUM),
-                await _query(client, prom_base, _QUERY_CACHE_HITS),
-                await _query(client, prom_base, _QUERY_CACHE_TOTAL),
+            r_request_rate, r_error_num, r_cache_hits, r_cache_total = await asyncio.gather(
+                _query(client, prom_base, _QUERY_REQUEST_RATE),
+                _query(client, prom_base, _QUERY_ERROR_RATE_NUM),
+                _query(client, prom_base, _QUERY_CACHE_HITS),
+                _query(client, prom_base, _QUERY_CACHE_TOTAL),
             )
         except (httpx.ConnectError, httpx.TimeoutException):
             # Req 8.3: upstream unreachable / timed out

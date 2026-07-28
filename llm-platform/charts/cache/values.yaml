@@ -17,6 +17,11 @@ secretRef:
 serviceAccount:
   name: "llm-platform"
 
+observability:
+  metrics:
+    enabled: true
+    scrapeInterval: "15s"
+
 env:
   LOG_LEVEL: "INFO"
   # NOTE: REDIS_URL uses the Bitnami redis sub-chart naming convention.

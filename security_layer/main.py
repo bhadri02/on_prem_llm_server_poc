@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from prometheus_client import make_asgi_app
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
 
@@ -27,6 +28,21 @@ from security_layer.logging_config import get_logger
 from security_layer.routers.health import router as health_router
 from security_layer.routers.post_check import router as post_check_router
 from security_layer.routers.pre_check import router as pre_check_router
+
+# ---------------------------------------------------------------------------
+# Configure shared observability logging at module level (Requirements 6.1–6.6)
+# ---------------------------------------------------------------------------
+from shared.observability.logging import configure_structlog
+
+configure_structlog("security", settings.log_level)
+
+# ---------------------------------------------------------------------------
+# Configure distributed tracing (opt-in, disabled by default for POC).
+# ---------------------------------------------------------------------------
+from shared.observability.middleware import configure_tracing
+
+if settings.tracing_enabled:
+    configure_tracing("security", settings.otel_endpoint)
 
 logger = get_logger(__name__)
 
@@ -89,7 +105,16 @@ async def lifespan(app: FastAPI):
     anonymizer = None
     if settings.pii_enabled:
         try:
-            analyzer = AnalyzerEngine()
+            from presidio_analyzer.nlp_engine import NlpEngineProvider
+            # Explicitly load en_core_web_sm (baked into the image at build time).
+            # Presidio's default is en_core_web_lg (587 MB) which is NOT baked in.
+            configuration = {
+                "nlp_engine_name": "spacy",
+                "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
+            }
+            provider = NlpEngineProvider(nlp_configuration=configuration)
+            nlp_engine = provider.create_engine()
+            analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
             anonymizer = AnonymizerEngine()
         except Exception as exc:
             logger.error(
@@ -176,6 +201,7 @@ async def validation_exception_handler(
 app.include_router(pre_check_router)
 app.include_router(post_check_router)
 app.include_router(health_router)
+app.mount("/metrics", make_asgi_app())
 
 
 # ---------------------------------------------------------------------------

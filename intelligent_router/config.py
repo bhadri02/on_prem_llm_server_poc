@@ -25,12 +25,17 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # Optional with defaults
     # ------------------------------------------------------------------
+    audit_api_key: str = ""                                        # AUDIT_API_KEY
     cache_url: str = "http://cache:8086"                          # CACHE_URL
     inference_adapter_url: str = "http://inference-adapter:8087"  # INFERENCE_ADAPTER_URL
     log_level: str = "INFO"                                        # LOG_LEVEL
     inference_timeout_seconds: int = 120                           # INFERENCE_TIMEOUT_SECONDS
     health_check_timeout_seconds: int = 5                          # HEALTH_CHECK_TIMEOUT_SECONDS
     port: int = 8082                                               # PORT
+
+    # ── Distributed tracing (opt-in, disabled by default for POC) ──────────
+    tracing_enabled: bool = False   # TRACING_ENABLED
+    otel_endpoint: str = "http://otel-collector:4317"  # OTEL_ENDPOINT
 
 
 # Module-level singleton — import this directly from other modules:

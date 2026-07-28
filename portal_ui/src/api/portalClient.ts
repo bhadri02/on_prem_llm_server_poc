@@ -56,13 +56,26 @@ export interface AuditQueryParams {
 }
 
 /**
+ * Converts a datetime-local string ("YYYY-MM-DDTHH:mm") to a UTC ISO-8601
+ * string the audit store accepts ("YYYY-MM-DDTHH:mm:00Z").
+ * If the value already has a timezone suffix it is returned unchanged.
+ */
+function toUtcIso(value: string): string {
+  // datetime-local produces exactly 16 chars: "YYYY-MM-DDTHH:mm"
+  if (value.length === 16 && !value.endsWith("Z")) {
+    return value + ":00Z";
+  }
+  return value;
+}
+
+/**
  * GET /portal/audit/events
  * Accepts optional from/to (ISO-8601) and limit query parameters.
  */
 export async function getAuditEvents(params: AuditQueryParams = {}): Promise<AuditEventList> {
   const query = new URLSearchParams();
-  if (params.from !== undefined) query.set("from", params.from);
-  if (params.to !== undefined) query.set("to", params.to);
+  if (params.from !== undefined) query.set("from", toUtcIso(params.from));
+  if (params.to !== undefined) query.set("to", toUtcIso(params.to));
   if (params.limit !== undefined) query.set("limit", String(params.limit));
 
   const qs = query.toString();
@@ -85,10 +98,23 @@ export async function getAuditRequest(requestId: string): Promise<AuditEventList
 
 /**
  * GET /portal/models
+ * Proxied through admin portal to Model Registry with auth handled server-side.
  */
 export async function getModels(): Promise<{ models: ModelRecord[] }> {
   const res = await fetch("/portal/models");
-  return handleResponse<{ models: ModelRecord[] }>(res);
+  // Registry returns a raw array — wrap it in { models: [...] }
+  if (!res.ok) {
+    let message: string;
+    try {
+      const body = await res.json() as { message?: string };
+      message = body.message ?? JSON.stringify(body);
+    } catch {
+      message = await res.text();
+    }
+    throw new ApiError(res.status, message);
+  }
+  const arr = await res.json() as ModelRecord[];
+  return { models: arr };
 }
 
 /**

@@ -49,7 +49,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
         # Skip rate limiting for health/metrics probes
-        if request.url.path in self.EXEMPT_PATHS:
+        if request.url.path in self.EXEMPT_PATHS or request.url.path.startswith("/metrics"):
             return await call_next(request)
 
         settings = get_settings()

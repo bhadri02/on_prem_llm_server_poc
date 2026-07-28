@@ -33,23 +33,26 @@ async def cache_lookup(
     request_id: str,
     cache_url: str,
     http_client: httpx.AsyncClient,
+    full_imf: dict | None = None,
 ) -> dict:
     """POST /cache/lookup.
 
+    Sends the full IMF envelope if provided, otherwise builds a minimal one.
     Returns the raw response dict on HTTP 200.
-    On any failure (non-200, timeout, connection error, parse error) returns
-    ``{"hit": False}`` and logs a WARNING with ``request_id`` and the failure
-    reason. Never raises.
+    On any failure returns ``{"hit": False}`` and logs a WARNING. Never raises.
     """
+    if full_imf is not None:
+        payload = full_imf
+    else:
+        payload = {
+            "request_id": request_id,
+            "request": {"messages": messages, "task_type": task_type, "model": model},
+            "routing": {"selected_model": model},
+        }
     try:
         resp = await http_client.post(
             f"{cache_url}/cache/lookup",
-            json={
-                "messages": messages,
-                "model": model,
-                "task_type": task_type,
-                "request_id": request_id,
-            },
+            json=payload,
             timeout=CACHE_TIMEOUT,
         )
         if resp.status_code == 200:
@@ -91,19 +94,14 @@ async def cache_write(
 ) -> None:
     """Fire-and-forget POST /cache/write.
 
-    Failures (non-200, timeout, connection error, any exception) are logged
-    as WARNING and never re-raised. Always called via FastAPI BackgroundTask.
+    Sends the full IMF envelope (response_imf) as the body.
+    Failures are logged as WARNING and never re-raised.
     """
     request_id = response_imf.get("request_id")
     try:
         resp = await http_client.post(
             f"{cache_url}/cache/write",
-            json={
-                "messages": messages,
-                "model": model,
-                "task_type": task_type,
-                "response_imf": response_imf,
-            },
+            json=response_imf,
             timeout=CACHE_TIMEOUT,
         )
         if resp.status_code >= 300:

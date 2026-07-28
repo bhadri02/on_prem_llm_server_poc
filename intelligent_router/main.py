@@ -24,6 +24,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from prometheus_client import make_asgi_app
 
 from intelligent_router.config import settings
 from intelligent_router.logging_config import get_logger
@@ -32,6 +33,24 @@ from intelligent_router.routers.health import health_router
 from intelligent_router.routers.openai_compat import openai_router
 from intelligent_router.routers.route import route_router
 from intelligent_router.task_classifier import load_classifier_rules
+
+# ---------------------------------------------------------------------------
+# Configure shared observability logging at module level (Requirements 6.1–6.6)
+# ---------------------------------------------------------------------------
+from shared.observability.logging import configure_structlog
+
+if settings is not None:
+    configure_structlog("router", settings.log_level)
+else:
+    configure_structlog("router", "INFO")
+
+# ---------------------------------------------------------------------------
+# Configure distributed tracing (opt-in, disabled by default for POC).
+# ---------------------------------------------------------------------------
+from shared.observability.middleware import configure_tracing
+
+if settings is not None and settings.tracing_enabled:
+    configure_tracing("router", settings.otel_endpoint)
 
 logger = get_logger(__name__)
 
@@ -190,6 +209,7 @@ def create_app() -> FastAPI:
     application.include_router(route_router)
     application.include_router(openai_router)
     application.include_router(health_router)
+    application.mount("/metrics", make_asgi_app())
 
     return application
 

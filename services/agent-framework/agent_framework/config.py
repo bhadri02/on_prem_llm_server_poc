@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     router_url: str = "http://router:8082"                  # ROUTER_URL
     gateway_api_key: str = "poc-secret-key"                 # GATEWAY_API_KEY
-    tool_catalog_path: str = "/config/tools/catalog.yaml"   # TOOL_CATALOG_PATH
+    tool_catalog_path: str = "/app/config/tools/catalog.yaml"   # TOOL_CATALOG_PATH
 
     # ------------------------------------------------------------------
     # Optional with defaults
@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     port: int = 8083                         # PORT
     metrics_port: int = 9090                 # METRICS_PORT
     agent_sub_call_timeout_seconds: float = 30.0  # per-LLM-call timeout to Router
+
+    # ── Distributed tracing (opt-in, disabled by default for POC) ──────────
+    tracing_enabled: bool = False   # TRACING_ENABLED
+    otel_endpoint: str = "http://otel-collector:4317"  # OTEL_ENDPOINT
 
 
 # Module-level singleton — import this directly from other modules:

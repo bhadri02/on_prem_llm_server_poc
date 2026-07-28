@@ -94,17 +94,40 @@ class ResponseBlock(BaseModel):
 # 4.7  IMFRequest
 # ---------------------------------------------------------------------------
 
+class RoutingBlock(BaseModel):
+    """Routing decision block — populated by the Router layer."""
+
+    selected_model: str | None = None
+    routing_mode: str = "auto"
+    fallback_level: int = 0
+
+
+class CacheBlock(BaseModel):
+    """Cache lookup/write state block."""
+
+    lookup_hit: bool = False
+    cache_key: str | None = None
+
+
 class IMFRequest(BaseModel):
     """Top-level Internal Message Format (IMF) envelope.
 
     ``request_id`` must be a valid UUID-v4; construction raises
     ``ValidationError`` (wrapping ``ValueError``) for any other value.
+
+    All fields align with the router's IMFRequest schema so the enriched
+    IMF can be forwarded directly without transformation.
     """
 
     request_id: str
+    trace_id: str | None = None
+    span_id: str | None = None
+    timestamp_utc: str | None = None
     user: UserBlock | None = None
     request: RequestBlock
     governance: GovernanceBlock = Field(default_factory=GovernanceBlock)
+    routing: RoutingBlock = Field(default_factory=RoutingBlock)
+    cache: CacheBlock = Field(default_factory=CacheBlock)
     response: ResponseBlock | None = None
     metadata: dict = Field(default_factory=dict)
     extensions: dict = Field(default_factory=dict)

@@ -31,6 +31,11 @@ secretRef:
 serviceAccount:
   name: "llm-platform"
 
+observability:
+  metrics:
+    enabled: true
+    scrapeInterval: "15s"
+
 livenessProbe:
   httpGet:
     path: /health

@@ -28,6 +28,9 @@ spec:
             - name: ui
               containerPort: 16686
               protocol: TCP
+            - name: grpc-collector
+              containerPort: 14250
+              protocol: TCP
             - name: compact
               containerPort: 6831
               protocol: UDP

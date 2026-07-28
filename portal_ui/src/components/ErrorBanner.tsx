@@ -18,33 +18,16 @@ export default function ErrorBanner({ statusCode, message, onDismiss }: ErrorBan
   return (
     <div
       role="alert"
-      style={{
-        background: "#fee2e2",
-        border: "1px solid #ef4444",
-        padding: "12px 16px",
-        borderRadius: 6,
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "flex-start",
-        marginBottom: 16,
-      }}
+      className="error-banner"
     >
-      <div>
-        <strong>Error {statusCode}</strong>: {message}
+      <div style={{ fontWeight: 500 }}>
+        <strong style={{ fontWeight: 700 }}>Error {statusCode}</strong>: {message}
       </div>
       <button
         onClick={onDismiss}
         aria-label="Dismiss error"
-        style={{
-          marginLeft: 16,
-          background: "none",
-          border: "none",
-          cursor: "pointer",
-          fontSize: 16,
-          lineHeight: 1,
-          color: "#b91c1c",
-          flexShrink: 0,
-        }}
+        className="error-banner-close"
+        style={{ marginLeft: 16 }}
       >
         ✕
       </button>

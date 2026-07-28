@@ -1,0 +1,22 @@
+# cache_service/requirements.txt
+# Cache Service (Layer 4) — pinned runtime dependencies.
+# Heavy package: sentence-transformers (semantic similarity embeddings).
+
+# Web framework
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+
+# Settings
+pydantic-settings==2.6.1
+
+# Prometheus metrics exposition
+prometheus-client==0.21.1
+
+# Redis async client
+redis[asyncio]==5.0.8
+
+# Semantic embedding model (only used here — NOT in other services)
+sentence-transformers==3.3.1
+
+# Structured logging (shared observability module dependency)
+structlog==24.4.0

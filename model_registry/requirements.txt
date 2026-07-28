@@ -1,0 +1,16 @@
+# model_registry/requirements.txt
+# Model Registry — pinned runtime dependencies.
+# Simple JSON file store — no ML or heavy packages.
+
+# Web framework
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+
+# Settings
+pydantic-settings==2.6.1
+
+# Prometheus metrics exposition
+prometheus-client==0.21.1
+
+# Structured logging (shared observability module dependency)
+structlog==24.4.0

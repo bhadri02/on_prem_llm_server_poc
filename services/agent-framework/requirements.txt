@@ -22,7 +22,6 @@ prometheus-client==0.21.1
 # Configuration / serialization
 pyyaml==6.0.2
 
-# Testing
-hypothesis==6.131.8
-pytest==8.3.5
-pytest-asyncio==0.25.3
+# Shared observability dependencies (shared.observability imports these)
+structlog==24.4.0
+starlette==0.41.3

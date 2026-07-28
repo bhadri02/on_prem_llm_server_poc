@@ -774,12 +774,12 @@ class TestOpenAIChatRequest:
     def test_all_optional_fields_can_be_set(self):
         req = OpenAIChatRequest(
             messages=[{"role": "user", "content": "Hi"}],
-            model="llama3.2-3b",
+            model="llama3.2:3b",
             max_tokens=512,
             temperature=0.7,
             stream=True,
         )
-        assert req.model == "llama3.2-3b"
+        assert req.model == "llama3.2:3b"
         assert req.max_tokens == 512
         assert req.temperature == 0.7
         assert req.stream is True

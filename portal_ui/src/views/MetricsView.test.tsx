@@ -34,12 +34,12 @@ describe("MetricsView unit tests", () => {
   });
 
   it("renders iframe with correct src when config resolves", async () => {
-    mockGetConfig.mockResolvedValue({ grafana_url: "http://grafana:3000" });
+    mockGetConfig.mockResolvedValue({ grafana_url: "https://grafana.example.com" });
     render(<MetricsView />);
     await waitFor(() => {
       const iframe = screen.getByTestId("grafana-iframe") as HTMLIFrameElement;
       expect(iframe.src).toBe(
-        "http://grafana:3000/d/poc-overview/llm-platform-poc?orgId=1&kiosk",
+        "https://grafana.example.com/d/poc-overview/llm-platform-poc?orgId=1&kiosk",
       );
     });
   });
@@ -53,7 +53,7 @@ describe("MetricsView unit tests", () => {
   });
 
   it("shows fallback message when iframe fires error event", async () => {
-    mockGetConfig.mockResolvedValue({ grafana_url: "http://grafana:3000" });
+    mockGetConfig.mockResolvedValue({ grafana_url: "https://grafana.example.com" });
     render(<MetricsView />);
     await waitFor(() => screen.getByTestId("grafana-iframe"));
 
@@ -61,10 +61,6 @@ describe("MetricsView unit tests", () => {
     const iframe = screen.getByTestId("grafana-iframe");
     // Simulate the onError handler
     iframe.dispatchEvent(new Event("error"));
-
-    // The React onError prop fires — but we need to trigger it through React
-    // The component uses onError={()=>setIframeError(true)}, so we test via
-    // verifying the iframe src construction is correct instead
   });
 });
 
@@ -73,7 +69,7 @@ describe("MetricsView unit tests", () => {
 // **Validates: Requirements 9.1, 9.4**
 // ---------------------------------------------------------------------------
 describe("Property 13: Grafana iframe src is constructed from Portal config value", () => {
-  it("constructs iframe src exactly as {grafana_url}/d/poc-overview/llm-platform-poc?orgId=1&kiosk", async () => {
+  it("constructs iframe src exactly as {grafana_url}/d/poc-overview/llm-platform-poc?orgId=1&kiosk or renders fallback in local dev mode", async () => {
     // Feature: platform-portals, Property 13: Grafana iframe src is constructed from Portal config value
     await fc.assert(
       fc.asyncProperty(
@@ -89,18 +85,33 @@ describe("Property 13: Grafana iframe src is constructed from Portal config valu
 
           const { unmount } = render(<MetricsView />);
 
-          await waitFor(
-            () => {
-              const iframe = screen.queryByTestId("grafana-iframe") as HTMLIFrameElement | null;
-              expect(iframe).toBeTruthy();
-            },
-            { timeout: 3000 },
-          );
+          const isLocalDefault =
+            grafanaUrl.includes("grafana:3000") ||
+            grafanaUrl.includes("localhost:3000") ||
+            grafanaUrl.includes("127.0.0.1:3000");
 
-          const iframe = screen.getByTestId("grafana-iframe") as HTMLIFrameElement;
-          // The iframe src should be exactly {grafana_url}/d/poc-overview/llm-platform-poc?orgId=1&kiosk
-          const expectedSrc = `${grafanaUrl}/d/poc-overview/llm-platform-poc?orgId=1&kiosk`;
-          expect(iframe.getAttribute("src")).toBe(expectedSrc);
+          if (isLocalDefault) {
+            await waitFor(
+              () => {
+                const fallback = screen.queryByTestId("grafana-fallback");
+                expect(fallback).toBeTruthy();
+              },
+              { timeout: 3000 },
+            );
+          } else {
+            await waitFor(
+              () => {
+                const iframe = screen.queryByTestId("grafana-iframe") as HTMLIFrameElement | null;
+                expect(iframe).toBeTruthy();
+              },
+              { timeout: 3000 },
+            );
+
+            const iframe = screen.getByTestId("grafana-iframe") as HTMLIFrameElement;
+            // The iframe src should be exactly {grafana_url}/d/poc-overview/llm-platform-poc?orgId=1&kiosk
+            const expectedSrc = `${grafanaUrl}/d/poc-overview/llm-platform-poc?orgId=1&kiosk`;
+            expect(iframe.getAttribute("src")).toBe(expectedSrc);
+          }
 
           unmount();
         },
