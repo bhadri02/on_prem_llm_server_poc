@@ -6,14 +6,16 @@ metadata:
     {{- include "agent-framework.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
-  ports:
-    - name: http
-      port: {{ .Values.service.port }}
-      targetPort: {{ .Values.service.port }}
-      protocol: TCP
-    - name: metrics
-      port: {{ .Values.metricsPort }}
-      targetPort: {{ .Values.metricsPort }}
-      protocol: TCP
   selector:
     {{- include "agent-framework.selectorLabels" . | nindent 4 }}
+  ports:
+    # Main application port — receives POST /agent/run from the Router
+    - name: http
+      protocol: TCP
+      port: {{ .Values.service.port }}
+      targetPort: http
+    # Prometheus metrics scrape port
+    - name: metrics
+      protocol: TCP
+      port: {{ .Values.observability.metrics.port }}
+      targetPort: metrics

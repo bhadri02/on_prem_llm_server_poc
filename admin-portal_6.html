@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>GWC data.ai — AI Hub</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #F8F6FC;
+    --bg-alt: #FFFFFF;
+    --surface: #FFFFFF;
+    --surface-2: #F4F0FA;
+    --surface-3: #ECE5F7;
+    --border: #E4DCF3;
+    --border-soft: #ECE6F7;
+    --text: #241C3B;
+    --text-dim: #675E85;
+    --text-faint: #9891B0;
+    --purple: #7C3AED;
+    --purple-deep: #6D28D9;
+    --orange: #F97316;
+    --orange-deep: #EA580C;
+    --grad: linear-gradient(135deg, #7C3AED 0%, #F97316 100%);
+    --grad-soft: linear-gradient(135deg, rgba(124,58,237,0.10), rgba(249,115,22,0.10));
+    --success: #0EA968;
+    --success-bg: #E4F8EF;
+    --warning: #B7791F;
+    --warning-bg: #FDF3DC;
+    --danger: #D5473C;
+    --danger-bg: #FBE9E7;
+    --radius: 14px;
+    --radius-sm: 9px;
+    --shadow: 0 2px 10px rgba(90,60,150,0.06);
+    --shadow-lg: 0 14px 34px rgba(90,60,150,0.12);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      radial-gradient(1100px 460px at 88% -8%, rgba(249,115,22,0.07), transparent 60%),
+      radial-gradient(900px 560px at -8% 8%, rgba(124,58,237,0.08), transparent 60%),
+      var(--bg);
+    color:var(--text);
+    font-family:'Inter', sans-serif;
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{ background: rgba(124,58,237,0.18); }
+  a{color:inherit;text-decoration:none;}
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:8px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  button{ font-family:'Inter'; }
+
+  .mono{font-family:'JetBrains Mono', monospace;}
+  .display{font-family:'Space Grotesk', sans-serif;}
+
+  /* ================= APP SHELL ================= */
+  .shell{ display:grid; grid-template-columns:252px 1fr; min-height:100vh; }
+  .sidebar{
+    background:var(--bg-alt); border-right:1px solid var(--border-soft);
+    padding:22px 16px; display:flex; flex-direction:column; gap:26px;
+    position:sticky; top:0; height:100vh;
+  }
+  .logo-mark{ display:flex; align-items:center; gap:11px; padding:2px 8px 0; }
+  .logo-glyph{
+    width:34px;height:34px;border-radius:10px; box-shadow:0 6px 16px rgba(124,58,237,.28);
+    overflow:hidden; flex:none; background:var(--surface-2); display:flex; align-items:center; justify-content:center;
+  }
+  .logo-glyph img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .logo-text{ font-family:'Space Grotesk'; font-weight:700; font-size:15.5px; line-height:1.15; color:var(--text);}
+  .logo-text span{ display:block; font-family:'Inter'; font-weight:500; font-size:11px; color:var(--text-faint); letter-spacing:.4px; text-transform:uppercase; }
+
+  .nav-group-label{ font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--text-faint); padding:0 12px; margin-bottom:6px; font-weight:700;}
+  .nav{ display:flex; flex-direction:column; gap:2px; }
+  .nav a{
+    display:flex; align-items:center; gap:11px; padding:10px 12px; border-radius:10px;
+    font-size:14px; font-weight:500; color:var(--text-dim); cursor:pointer; position:relative; transition:.2s;
+  }
+  .nav a .ic{ width:17px; height:17px; flex:none; opacity:.75; }
+  .nav a:hover{ background:var(--surface-2); color:var(--text); }
+  .nav a.active{ background:var(--surface-2); color:var(--text); font-weight:600; }
+  .nav a.active::before{
+    content:''; position:absolute; left:-16px; top:8px; bottom:8px; width:3px; border-radius:3px; background:var(--grad);
+  }
+  .nav a.active .ic{ opacity:1; }
+
+  .sidebar-foot{ margin-top:auto; padding:12px; border-radius:12px; background:var(--surface-2); border:1px solid var(--border-soft); position:relative; cursor:pointer; }
+  .sf-row{ display:flex; align-items:center; gap:10px; }
+  .avatar{ width:32px;height:32px;border-radius:9px; background:var(--grad); display:flex;align-items:center;justify-content:center; font-weight:700; font-size:13px; font-family:'Space Grotesk'; color:#fff;}
+  .sf-name{ font-size:13px; font-weight:600; }
+  .sf-role{ font-size:11.5px; color:var(--text-faint); }
+
+  .main{ padding:26px 34px 60px; }
+  .topbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:26px; gap:20px; flex-wrap:wrap; }
+  .page-title{ font-family:'Space Grotesk'; font-size:23px; font-weight:600; }
+  .page-sub{ color:var(--text-faint); font-size:13.5px; margin-top:3px; }
+  .search{
+    display:flex; align-items:center; gap:8px; background:var(--surface); border:1px solid var(--border);
+    padding:9px 14px; border-radius:10px; color:var(--text-faint); font-size:13px; min-width:230px;
+    box-shadow:var(--shadow);
+  }
+  .search input{ border:none; outline:none; background:transparent; font-family:'Inter'; font-size:13px; color:var(--text); width:100%; }
+  .search input::placeholder{ color:var(--text-faint); }
+  .btn{
+    border:none; cursor:pointer; font-family:'Inter'; font-weight:600; font-size:13.5px; border-radius:10px;
+    padding:10px 16px; display:inline-flex; align-items:center; gap:8px; transition:.2s;
+  }
+  .btn-primary{ background:var(--grad); color:white; box-shadow:0 8px 20px rgba(124,58,237,.24); }
+  .btn-primary:hover{ filter:brightness(1.05); transform:translateY(-1px); }
+  .btn-ghost{ background:var(--surface); color:var(--text-dim); border:1px solid var(--border); }
+  .btn-ghost:hover{ color:var(--text); border-color:var(--purple); }
+  .btn-danger{ background:var(--danger-bg); color:var(--danger); border:1px solid #F5C6C1; }
+  .btn-sm{ padding:7px 12px; font-size:12.5px; }
+  .btn:disabled{ opacity:.5; cursor:not-allowed; transform:none !important; }
+
+  .subview{ display:none; }
+  .subview.active{ display:block; animation:fade .3s ease; }
+  @keyframes fade{ from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:translateY(0);} }
+
+  .kpi-row{ display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:26px; }
+  .kpi{ background:var(--surface); border:1px solid var(--border-soft); border-radius:var(--radius); padding:18px 20px; position:relative; overflow:hidden; box-shadow:var(--shadow); cursor:default;}
+  .kpi::before{ content:''; position:absolute; right:-30px; top:-30px; width:100px; height:100px; border-radius:50%; background:var(--grad-soft); }
+  .kpi-label{ font-size:12px; color:var(--text-faint); font-weight:700; text-transform:uppercase; letter-spacing:.5px; }
+  .kpi-value{ font-family:'Space Grotesk'; font-size:28px; font-weight:700; margin-top:8px; background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .kpi-delta{ font-size:12px; margin-top:6px; color:var(--success); font-weight:600; }
+  .kpi-delta.warn{ color:var(--warning); }
+
+  .panel{ background:var(--surface); border:1px solid var(--border-soft); border-radius:var(--radius); overflow:visible; margin-bottom:22px; box-shadow:var(--shadow); }
+  .panel-head{ display:flex; align-items:center; justify-content:space-between; padding:18px 20px; border-bottom:1px solid var(--border-soft); }
+  .panel-title{ font-family:'Space Grotesk'; font-weight:600; font-size:15.5px; }
+  .panel-sub{ font-size:12.5px; color:var(--text-faint); margin-top:2px; }
+  .panel-body{ padding:6px 0; }
+
+  table{ width:100%; border-collapse:collapse; font-size:13.5px; }
+  th{ text-align:left; padding:10px 20px; color:var(--text-faint); font-weight:700; font-size:11.5px; text-transform:uppercase; letter-spacing:.4px; border-bottom:1px solid var(--border-soft); }
+  td{ padding:13px 20px; border-bottom:1px solid var(--border-soft); color:var(--text-dim); }
+  tr:last-child td{ border-bottom:none; }
+  tbody tr{ cursor:pointer; transition:.15s; }
+  tr:hover td{ background:var(--surface-2); }
+  tr.selected td{ background:var(--surface-2); }
+  .empty-row td{ text-align:center; color:var(--text-faint); padding:34px 20px; cursor:default; }
+  .empty-row:hover td{ background:transparent; }
+
+  .badge{ display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:11.5px; font-weight:700; }
+  .badge-admin{ background:#F1E7FE; color:#7C3AED; border:1px solid #DFC9FB; }
+  .badge-developer{ background:#E3EEFE; color:#2563EB; border:1px solid #C7DCFC; }
+  .badge-analyst{ background:#FEEBDD; color:#C2540A; border:1px solid #FCD3AC; }
+  .badge-viewer{ background:#EEF0F4; color:#5B6472; border:1px solid #DCE1E8; }
+  .badge-passed{ background:var(--success-bg); color:var(--success); border:1px solid #BEEBD4; }
+  .badge-danger{ background:var(--danger-bg); color:var(--danger); border:1px solid #F5C6C1; }
+  .badge-warn{ background:var(--warning-bg); color:var(--warning); border:1px solid #F3DFA6; }
+  .status-dot{ width:7px;height:7px;border-radius:50%; display:inline-block; margin-right:6px; }
+  .status-active{ background:var(--success); box-shadow:0 0 6px rgba(14,169,104,.4); }
+  .status-revoked{ background:var(--danger); }
+  .status-inactive{ background:var(--text-faint); }
+  .status-staging{ background:var(--warning); }
+
+  .row-flex{ display:flex; align-items:center; gap:10px; }
+  .name-cell{ display:flex; align-items:center; gap:10px; }
+  .mini-avatar{ width:28px;height:28px;border-radius:8px; background:var(--surface-3); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:var(--text-dim); font-family:'Space Grotesk'; border:1px solid var(--border);}
+  .cell-name{ color:var(--text); font-weight:600; font-size:13.5px; }
+  .cell-sub{ color:var(--text-faint); font-size:12px; margin-top:1px; }
+
+  .menu-wrap{ position:relative; display:inline-block; }
+  .icon-btn{ width:30px;height:30px;border-radius:8px; border:1px solid var(--border); background:var(--surface-2); display:flex; align-items:center; justify-content:center; color:var(--text-faint); cursor:pointer; transition:.2s;}
+  .icon-btn:hover{ color:var(--text); border-color:var(--purple); }
+  .dropdown{
+    position:absolute; right:0; top:calc(100% + 6px); background:var(--surface); border:1px solid var(--border);
+    border-radius:10px; box-shadow:var(--shadow-lg); min-width:180px; z-index:60; overflow:hidden; display:none;
+  }
+  .dropdown.open{ display:block; }
+  .dropdown button{
+    width:100%; text-align:left; background:none; border:none; padding:10px 14px; font-size:13px; color:var(--text-dim);
+    cursor:pointer; display:flex; align-items:center; gap:9px;
+  }
+  .dropdown button:hover{ background:var(--surface-2); color:var(--text); }
+  .dropdown button.danger{ color:var(--danger); }
+  .dropdown button.danger:hover{ background:var(--danger-bg); }
+  .dropdown hr{ border:none; border-top:1px solid var(--border-soft); margin:4px 0; }
+
+  .matrix-wrap{ overflow-x:auto; }
+  .matrix{ width:100%; border-collapse:collapse; }
+  .matrix th, .matrix td{ text-align:center; }
+  .matrix th:first-child, .matrix td:first-child{ text-align:left; }
+  .perm{ display:inline-flex; width:26px; height:26px; border-radius:7px; align-items:center; justify-content:center; font-size:12px; font-weight:700; cursor:pointer; transition:.15s; border:1px solid transparent;}
+  .perm-yes{ background:var(--success-bg); color:var(--success); }
+  .perm-yes:hover{ border-color:var(--success); }
+  .perm-no{ background:#F4F1FA; color:var(--text-faint); }
+  .perm-no:hover{ border-color:var(--text-faint); }
+  .matrix-savebar{
+    display:none; align-items:center; justify-content:space-between; gap:12px; padding:12px 20px;
+    background:var(--surface-2); border-top:1px solid var(--border-soft); font-size:13px; color:var(--text-dim);
+  }
+  .matrix-savebar.show{ display:flex; }
+
+  .grid-2{ display:grid; grid-template-columns:1.6fr 1fr; gap:20px; align-items:start; }
+
+  .chip{ display:inline-flex; align-items:center; gap:5px; padding:5px 10px; border-radius:8px; background:var(--surface-3); border:1px solid var(--border); font-size:11.5px; color:var(--text-dim); font-family:'JetBrains Mono'; }
+  .chip-off{ opacity:.55; }
+  .chip-x{ cursor:pointer; margin-left:2px; opacity:.6;}
+  .chip-x:hover{ opacity:1; }
+
+  .side-detail{ background:var(--surface); border:1px solid var(--border-soft); border-radius:var(--radius); padding:20px; box-shadow:var(--shadow); position:sticky; top:26px; }
+  .detail-head{ display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+  .detail-avatar{ width:46px;height:46px;border-radius:12px; background:var(--grad); display:flex;align-items:center;justify-content:center; font-family:'Space Grotesk'; font-weight:700; color:#fff;}
+  .field{ margin-bottom:14px; }
+  .field-label{ font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--text-faint); font-weight:700; margin-bottom:5px;}
+  .field-value{ font-size:13.5px; color:var(--text); }
+  .role-select{ padding:7px 10px; border-radius:8px; border:1px solid var(--border); background:var(--surface); font-family:'Inter'; font-size:13px; color:var(--text); cursor:pointer; }
+  .divider{ height:1px; background:var(--border-soft); margin:16px 0; }
+  .key-row{ display:flex; align-items:center; justify-content:space-between; padding:10px 12px; background:var(--surface-2); border-radius:9px; margin-bottom:8px; border:1px solid var(--border-soft);}
+  .toggle-status{ font-size:11px; font-weight:600; cursor:pointer; padding:4px 9px; border-radius:999px; border:1px solid transparent; }
+
+  .bar-chart{ display:flex; align-items:flex-end; gap:10px; height:130px; padding:12px 4px 0; }
+  .bar{ flex:1; border-radius:6px 6px 3px 3px; background:var(--grad); position:relative; min-height:6px; opacity:.92; cursor:pointer; transition:.2s;}
+  .bar:hover{ opacity:1; transform:scaleY(1.02); transform-origin:bottom; }
+  .bar-label{ position:absolute; bottom:-22px; left:0; right:0; text-align:center; font-size:10.5px; color:var(--text-faint); }
+  .bar-value{ position:absolute; top:-20px; left:0; right:0; text-align:center; font-size:11px; font-weight:700; color:var(--text); opacity:0; transition:.2s; }
+  .bar:hover .bar-value{ opacity:1; }
+
+  svg{ display:block; }
+  .icon{ stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+
+  /* ===== Modal ===== */
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(36,28,59,0.35); backdrop-filter:blur(2px);
+    display:none; align-items:flex-start; justify-content:center; z-index:200; padding:60px 20px; overflow-y:auto;
+  }
+  .modal-overlay.open{ display:flex; }
+  .modal{
+    background:var(--surface); border-radius:16px; border:1px solid var(--border-soft); box-shadow:var(--shadow-lg);
+    width:100%; max-width:460px; animation:modalIn .25s ease;
+  }
+  @keyframes modalIn{ from{opacity:0; transform:translateY(10px) scale(.98);} to{opacity:1; transform:translateY(0) scale(1);} }
+  .modal-head{ display:flex; align-items:center; justify-content:space-between; padding:20px 22px; border-bottom:1px solid var(--border-soft); }
+  .modal-title{ font-family:'Space Grotesk'; font-weight:600; font-size:16px; }
+  .modal-close{ width:28px;height:28px; border-radius:8px; border:none; background:var(--surface-2); color:var(--text-faint); cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  .modal-close:hover{ color:var(--text); }
+  .modal-body{ padding:20px 22px; display:flex; flex-direction:column; gap:14px; }
+  .modal-foot{ padding:16px 22px; border-top:1px solid var(--border-soft); display:flex; justify-content:flex-end; gap:10px; }
+  .form-field label{ display:block; font-size:12px; font-weight:700; color:var(--text-faint); text-transform:uppercase; letter-spacing:.4px; margin-bottom:6px; }
+  .form-field input, .form-field select{
+    width:100%; padding:10px 12px; border-radius:9px; border:1px solid var(--border); background:var(--bg);
+    font-family:'Inter'; font-size:13.5px; color:var(--text); outline:none;
+  }
+  .form-field input:focus, .form-field select:focus{ border-color:var(--purple); }
+  .checkbox-row{ display:flex; flex-wrap:wrap; gap:8px; }
+  .check-chip{ display:flex; align-items:center; gap:6px; padding:7px 11px; border-radius:8px; border:1px solid var(--border); font-size:12.5px; cursor:pointer; user-select:none; }
+  .check-chip.checked{ background:var(--grad-soft); border-color:var(--purple); color:var(--purple-deep); font-weight:600; }
+  .check-chip input{ display:none; }
+
+  /* ===== Toast ===== */
+  .toast-container{ position:fixed; bottom:24px; right:24px; display:flex; flex-direction:column; gap:10px; z-index:300; }
+  .toast{
+    background:var(--text); color:#fff; padding:12px 18px; border-radius:10px; font-size:13.5px; box-shadow:var(--shadow-lg);
+    display:flex; align-items:center; gap:10px; animation:toastIn .25s ease; max-width:320px;
+  }
+  .toast .dot-ok{ width:8px;height:8px;border-radius:50%; background:#4ADE80; flex:none;}
+  @keyframes toastIn{ from{opacity:0; transform:translateY(8px);} to{opacity:1; transform:translateY(0);} }
+
+  @media (max-width: 980px){
+    .shell{ grid-template-columns:1fr; }
+    .sidebar{ display:none; }
+    .kpi-row{ grid-template-columns:repeat(2,1fr); }
+    .grid-2{ grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="logo-mark">
+      <div class="logo-glyph"><img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTjuI6Baakf9tjiVvVBalW36h9X1UCJbbwrKBkcB94MEQ&s=10" alt="GWC data.ai logo"></div>
+      <div class="logo-text">GWC data.ai<span>AI Hub</span></div>
+    </div>
+
+    <div>
+      <div class="nav-group-label">Overview</div>
+      <div class="nav">
+        <a class="active" onclick="showSub('dashboard', this)">
+          <svg class="icon ic" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+          Dashboard
+        </a>
+      </div>
+    </div>
+
+    <div>
+      <div class="nav-group-label">Access Control</div>
+      <div class="nav">
+        <a onclick="showSub('users', this)">
+          <svg class="icon ic" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c0-3.6 2.9-6 5.5-6s5.5 2.4 5.5 6"/><circle cx="17.5" cy="8" r="2.6"/><path d="M15.5 14.3c2.3.3 4.5 2.4 4.5 5.7"/></svg>
+          Users &amp; Roles
+        </a>
+        <a onclick="showSub('keys', this)">
+          <svg class="icon ic" viewBox="0 0 24 24"><circle cx="8" cy="14.5" r="4.2"/><path d="M11 11.5 19.5 3M15.5 7l2.5 2.5M18 4.5 20.5 7"/></svg>
+          API Keys
+        </a>
+      </div>
+    </div>
+
+    <div>
+      <div class="nav-group-label">Platform</div>
+      <div class="nav">
+        <a onclick="showSub('models', this)">
+          <svg class="icon ic" viewBox="0 0 24 24"><path d="M12 3 3 7.5 12 12l9-4.5L12 3Z"/><path d="M3 12l9 4.5 9-4.5M3 16.5l9 4.5 9-4.5"/></svg>
+          Model Registry
+        </a>
+        <a onclick="showSub('audit', this)">
+          <svg class="icon ic" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 12h6M9 16h6M9 8h2"/></svg>
+          Audit Log
+        </a>
+      </div>
+    </div>
+
+    <div class="sidebar-foot" onclick="toggleDropdown(event,'profileMenu')">
+      <div class="sf-row">
+        <div class="avatar">AK</div>
+        <div>
+          <div class="sf-name">Aiko Kobayashi</div>
+          <div class="sf-role">Platform Admin</div>
+        </div>
+      </div>
+      <div class="dropdown" id="profileMenu" style="left:0; right:auto; bottom:calc(100% + 6px); top:auto; min-width:200px;">
+        <button onclick="showToast('Profile settings — demo only')">⚙️ Account settings</button>
+        <button onclick="showToast('Signed out (demo only)')">↩️ Sign out</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <!-- DASHBOARD -->
+    <section class="subview active" id="sub-dashboard">
+      <div class="topbar">
+        <div>
+          <div class="page-title">Platform overview</div>
+          <div class="page-sub">Live status across gateway, routing, and inference layers</div>
+        </div>
+        <div class="row-flex">
+          <div class="search">
+            <svg class="icon" width="15" height="15" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <input id="globalSearch" placeholder="Search users, keys, models…" oninput="globalSearch(this.value)">
+          </div>
+          <button class="btn btn-primary" onclick="openInviteModal()">
+            <svg class="icon" width="15" height="15" viewBox="0 0 24 24" stroke="white"><path d="M12 5v14M5 12h14"/></svg>
+            Invite user
+          </button>
+        </div>
+      </div>
+
+      <div class="kpi-row">
+        <div class="kpi"><div class="kpi-label">Requests / sec</div><div class="kpi-value">42.7</div><div class="kpi-delta">▲ 8.1% vs last hour</div></div>
+        <div class="kpi"><div class="kpi-label">Cache hit rate</div><div class="kpi-value">61%</div><div class="kpi-delta">▲ 3.4% vs last hour</div></div>
+        <div class="kpi"><div class="kpi-label">Error rate</div><div class="kpi-value">0.4%</div><div class="kpi-delta warn">▲ 0.1% — within SLO</div></div>
+        <div class="kpi"><div class="kpi-label">Active users</div><div class="kpi-value" id="activeUserCount">128</div><div class="kpi-delta">▲ 12 this week</div></div>
+      </div>
+
+      <div class="grid-2">
+        <div class="panel">
+          <div class="panel-head">
+            <div><div class="panel-title">Requests by task type</div><div class="panel-sub">Last 24 hours, classified by the Intelligent Router — hover a bar for the count</div></div>
+          </div>
+          <div class="panel-body" style="padding:20px 24px 34px; position:relative;">
+            <div class="bar-chart">
+              <div class="bar" style="height:100%;" onclick="showToast('Chat: 18,204 requests in the last 24h')"><span class="bar-value">18,204</span><span class="bar-label">Chat</span></div>
+              <div class="bar" style="height:62%;" onclick="showToast('Code: 11,290 requests in the last 24h')"><span class="bar-value">11,290</span><span class="bar-label">Code</span></div>
+              <div class="bar" style="height:44%;" onclick="showToast('Reasoning: 8,012 requests in the last 24h')"><span class="bar-value">8,012</span><span class="bar-label">Reasoning</span></div>
+              <div class="bar" style="height:38%;" onclick="showToast('Summarization: 6,920 requests in the last 24h')"><span class="bar-value">6,920</span><span class="bar-label">Summarize</span></div>
+              <div class="bar" style="height:22%;" onclick="showToast('Translation: 4,005 requests in the last 24h')"><span class="bar-value">4,005</span><span class="bar-label">Translate</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><div><div class="panel-title">Recent audit events</div><div class="panel-sub">Fed from Audit Store</div></div>
+            <button class="btn btn-ghost btn-sm" onclick="showSub('audit', document.querySelectorAll('.nav a')[3])">View all</button>
+          </div>
+          <div class="panel-body">
+            <table><tbody id="dashAuditBody"></tbody></table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- USERS & ROLES -->
+    <section class="subview" id="sub-users">
+      <div class="topbar">
+        <div>
+          <div class="page-title">Users &amp; roles</div>
+          <div class="page-sub">Server-side identity resolution — roles are never trusted from the client</div>
+        </div>
+        <button class="btn btn-primary" onclick="openInviteModal()">
+          <svg class="icon" width="15" height="15" viewBox="0 0 24 24" stroke="white"><path d="M12 5v14M5 12h14"/></svg>
+          Create user
+        </button>
+      </div>
+
+      <div class="grid-2">
+        <div class="panel" style="margin-bottom:0;">
+          <div class="panel-head">
+            <div><div class="panel-title">All users</div><div class="panel-sub" id="userCountSub">128 total · 4 roles</div></div>
+            <div class="menu-wrap">
+              <button class="btn btn-ghost btn-sm" onclick="toggleDropdown(event,'userFilterMenu')">Filter: <span id="userFilterLabel">All roles</span></button>
+              <div class="dropdown" id="userFilterMenu">
+                <button onclick="filterUsers('all')">All roles</button>
+                <hr>
+                <button onclick="filterUsers('admin')">Admin</button>
+                <button onclick="filterUsers('developer')">Developer</button>
+                <button onclick="filterUsers('analyst')">Analyst</button>
+                <button onclick="filterUsers('viewer')">Viewer</button>
+              </div>
+            </div>
+          </div>
+          <div class="panel-body">
+            <table>
+              <thead><tr><th>User</th><th>Role</th><th>Department</th><th>Status</th><th></th></tr></thead>
+              <tbody id="usersTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="side-detail" id="user-detail"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div><div class="panel-title">Role permission matrix</div><div class="panel-sub">Click a cell to toggle access — enforced server-side at the Security Layer</div></div>
+        </div>
+        <div class="panel-body matrix-wrap">
+          <table class="matrix" id="permMatrix"></table>
+        </div>
+        <div class="matrix-savebar" id="matrixSaveBar">
+          <span>Unsaved changes to the policy matrix</span>
+          <div class="row-flex">
+            <button class="btn btn-ghost btn-sm" onclick="discardMatrix()">Discard</button>
+            <button class="btn btn-primary btn-sm" onclick="saveMatrix()">Save changes</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div><div class="panel-title">Per-user model access</div><div class="panel-sub">Independent of role — grants which specific models a user can be issued keys for. Click a cell to toggle, or edit from the user detail panel above.</div></div>
+        </div>
+        <div class="panel-body matrix-wrap" id="userModelMatrixWrap"></div>
+      </div>
+    </section>
+
+    <!-- API KEYS -->
+    <section class="subview" id="sub-keys">
+      <div class="topbar">
+        <div>
+          <div class="page-title">API keys</div>
+          <div class="page-sub">Per-user keys with model entitlements and optional rate overrides</div>
+        </div>
+        <button class="btn btn-primary" onclick="openKeyModal()">
+          <svg class="icon" width="15" height="15" viewBox="0 0 24 24" stroke="white"><path d="M12 5v14M5 12h14"/></svg>
+          Generate key
+        </button>
+      </div>
+      <div class="panel">
+        <div class="panel-body">
+          <table>
+            <thead><tr><th>Key</th><th>Owner</th><th>Entitled models</th><th>Expires</th><th>Status</th><th></th></tr></thead>
+            <tbody id="keysTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- MODEL REGISTRY -->
+    <section class="subview" id="sub-models">
+      <div class="topbar">
+        <div>
+          <div class="page-title">Model registry</div>
+          <div class="page-sub">Models available for routing, by task capability</div>
+        </div>
+        <button class="btn btn-primary" onclick="openModelModal()">
+          <svg class="icon" width="15" height="15" viewBox="0 0 24 24" stroke="white"><path d="M12 5v14M5 12h14"/></svg>
+          Register model
+        </button>
+      </div>
+      <div class="panel">
+        <div class="panel-body">
+          <table>
+            <thead><tr><th>Model</th><th>Backend</th><th>Tasks</th><th>API Key</th><th>Status</th><th>Context</th><th></th></tr></thead>
+            <tbody id="modelsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- AUDIT LOG -->
+    <section class="subview" id="sub-audit">
+      <div class="topbar">
+        <div>
+          <div class="page-title">Audit log</div>
+          <div class="page-sub">Every request, decision, and block — queryable by user and time range</div>
+        </div>
+        <div class="row-flex">
+          <div class="search">
+            <svg class="icon" width="15" height="15" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <input id="auditSearch" placeholder="user_id, event type…" oninput="renderAudit()">
+          </div>
+          <button class="btn btn-ghost" onclick="exportAudit()">
+            <svg class="icon" width="14" height="14" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+            Export
+          </button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-body">
+          <table>
+            <thead><tr><th>Event</th><th>User</th><th>Layer</th><th>Outcome</th><th>Time</th></tr></thead>
+            <tbody id="auditTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- MODALS -->
+<div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this) closeModal()">
+  <div class="modal" id="modalBox"></div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+/* ============================= STATE ============================= */
+let users = [
+  {id:1, initials:'AK', name:'Aiko Kobayashi', email:'aiko@company.com', role:'admin', dept:'Platform', status:'active',
+   keys:[{label:'Legacy POC key', masked:'poc-secr•••••••', status:'active'},{label:'dev laptop key', masked:'sk-8f21•••••••', status:'active'}],
+   modelAccess:['llama3.2:3b','mixtral:8x7b','claude-sonnet-5','claude-haiku-4-5']},
+  {id:2, initials:'RM', name:'Rafael Mendes', email:'rafael@company.com', role:'developer', dept:'Engineering', status:'active',
+   keys:[{label:'dev laptop key', masked:'sk-8f21•••••••', status:'active'}],
+   modelAccess:['llama3.2:3b','mixtral:8x7b','claude-sonnet-5']},
+  {id:3, initials:'SN', name:'Sana Nakamura', email:'sana@company.com', role:'analyst', dept:'Finance', status:'active',
+   keys:[{label:'analyst key', masked:'sk-3ac0•••••••', status:'active'}],
+   modelAccess:['llama3.2:3b']},
+  {id:4, initials:'JD', name:'Jonas Dupree', email:'jonas@company.com', role:'viewer', dept:'Legal', status:'inactive',
+   keys:[], modelAccess:[]},
+  {id:5, initials:'PL', name:'Priya Lall', email:'priya@company.com', role:'developer', dept:'Engineering', status:'active',
+   keys:[{label:'ci pipeline key', masked:'sk-77b1•••••••', status:'active'}],
+   modelAccess:['llama3.2:3b','claude-sonnet-5']},
+];
+let nextUserId = 6;
+let selectedUserId = 1;
+let userFilter = 'all';
+
+let apiKeys = [
+  {id:1, masked:'poc-secr•••••••', owner:'Aiko Kobayashi', models:['llama3.2:3b','claude-sonnet-5'], expires:'Never', status:'active'},
+  {id:2, masked:'sk-8f21•••••••', owner:'Rafael Mendes', models:['llama3.2:3b','mixtral:8x7b','claude-sonnet-5'], expires:'Dec 2026', status:'active'},
+  {id:3, masked:'sk-3ac0•••••••', owner:'Sana Nakamura', models:['llama3.2:3b'], expires:'Never', status:'active'},
+  {id:4, masked:'sk-9de4•••••••', owner:'Jonas Dupree', models:[], expires:'—', status:'revoked'},
+];
+let nextKeyId = 5;
+
+let models = [
+  {name:'llama3.2:3b', backend:'Ollama · CPU · On-prem', tasks:['chat','code','reasoning','summarization','translation'], status:'active', context:'8k', apiKey:null},
+  {name:'mixtral:8x7b', backend:'Ollama · GPU · On-prem', tasks:['chat','reasoning'], status:'staging', context:'32k', apiKey:null},
+  {name:'claude-sonnet-5', backend:'Anthropic API · Cloud', tasks:['chat','code','reasoning','summarization','translation'], status:'active', context:'200k', apiKey:'sk-ant-api03-9fL2••••••••'},
+  {name:'claude-haiku-4-5', backend:'Anthropic API · Cloud', tasks:['chat','summarization','translation'], status:'staging', context:'200k', apiKey:null},
+];
+
+let auditEvents = [
+  {event:'request_received', user:'rafael@company.com', layer:'API Gateway', outcome:'passed', time:'14:02:11'},
+  {event:'security_block', user:'jonas@company.com', layer:'Security Layer', outcome:'injection_detected', time:'13:58:04'},
+  {event:'policy_denied', user:'sana@company.com', layer:'Security Layer', outcome:'insufficient_role', time:'13:44:52'},
+  {event:'response_sent', user:'aiko@company.com', layer:'API Gateway', outcome:'passed', time:'13:40:19'},
+];
+
+const roleOrder = ['viewer','analyst','developer','admin'];
+const taskCols = ['chat','code','reasoning','summarization','translation','admin'];
+let permMatrix = {
+  viewer:    {chat:false, code:false, reasoning:false, summarization:false, translation:false, admin:false},
+  analyst:   {chat:true,  code:false, reasoning:false, summarization:true,  translation:true,  admin:false},
+  developer: {chat:true,  code:true,  reasoning:true,  summarization:true,  translation:true,  admin:false},
+  admin:     {chat:true,  code:true,  reasoning:true,  summarization:true,  translation:true,  admin:true},
+};
+let permMatrixSaved = JSON.parse(JSON.stringify(permMatrix));
+
+/* ============================= NAV ============================= */
+function showSub(name, link){
+  document.querySelectorAll('.subview').forEach(v=>v.classList.remove('active'));
+  document.getElementById('sub-'+name).classList.add('active');
+  document.querySelectorAll('.nav a').forEach(a=>a.classList.remove('active'));
+  link.classList.add('active');
+  closeAllDropdowns();
+}
+
+/* ============================= TOAST ============================= */
+function showToast(msg){
+  const c = document.getElementById('toastContainer');
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.innerHTML = `<span class="dot-ok"></span><span>${msg}</span>`;
+  c.appendChild(t);
+  setTimeout(()=>{ t.style.opacity='0'; t.style.transition='.3s'; setTimeout(()=>t.remove(),300); }, 2600);
+}
+
+/* ============================= DROPDOWNS ============================= */
+function closeAllDropdowns(except){
+  document.querySelectorAll('.dropdown.open').forEach(d=>{ if(d.id!==except) d.classList.remove('open'); });
+}
+function toggleDropdown(evt, id){
+  evt.stopPropagation();
+  const el = document.getElementById(id);
+  const willOpen = !el.classList.contains('open');
+  closeAllDropdowns(id);
+  el.classList.toggle('open', willOpen);
+}
+document.addEventListener('click', ()=>closeAllDropdowns());
+
+/* ============================= MODAL ============================= */
+function openModal(html){
+  document.getElementById('modalBox').innerHTML = html;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function closeModal(){
+  document.getElementById('modalOverlay').classList.remove('open');
+}
+
+/* ============================= USERS ============================= */
+function badgeHtml(role){ return `<span class="badge badge-${role}">${role}</span>`; }
+function statusDot(status){
+  const cls = status==='active' ? 'status-active' : (status==='revoked' ? 'status-revoked' : 'status-inactive');
+  const label = status.charAt(0).toUpperCase()+status.slice(1);
+  return `<span class="status-dot ${cls}"></span>${label}`;
+}
+
+function renderUsers(){
+  const body = document.getElementById('usersTableBody');
+  const filtered = users.filter(u => userFilter==='all' || u.role===userFilter);
+  document.getElementById('userCountSub').textContent = `${users.length} total · 4 roles`;
+  document.getElementById('activeUserCount').textContent = users.filter(u=>u.status==='active').length;
+
+  if(filtered.length===0){
+    body.innerHTML = `<tr class="empty-row"><td colspan="5">No users match this filter.</td></tr>`;
+    return;
+  }
+  body.innerHTML = filtered.map(u => `
+    <tr class="${u.id===selectedUserId?'selected':''}" onclick="selectUser(${u.id})">
+      <td class="name-cell"><div class="mini-avatar">${u.initials}</div><div><div class="cell-name">${u.name}</div><div class="cell-sub">${u.email}</div></div></td>
+      <td>${badgeHtml(u.role)}</td>
+      <td>${u.dept}</td>
+      <td>${statusDot(u.status)}</td>
+      <td onclick="event.stopPropagation()">
+        <div class="menu-wrap">
+          <span class="icon-btn" onclick="toggleDropdown(event,'userMenu${u.id}')">⋯</span>
+          <div class="dropdown" id="userMenu${u.id}">
+            <button onclick="selectUser(${u.id}); toggleDropdown(event,'userMenu${u.id}')">👤 View detail</button>
+            <button onclick="promptChangeRole(${u.id})">🔁 Change role</button>
+            <hr>
+            <button class="danger" onclick="toggleUserStatus(${u.id})">${u.status==='active' ? '🚫 Deactivate user' : '✅ Reactivate user'}</button>
+          </div>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function filterUsers(role){
+  userFilter = role;
+  document.getElementById('userFilterLabel').textContent = role==='all' ? 'All roles' : role.charAt(0).toUpperCase()+role.slice(1);
+  renderUsers();
+}
+
+function selectUser(id){
+  selectedUserId = id;
+  renderUsers();
+  renderUserDetail();
+}
+
+function renderUserDetail(){
+  const u = users.find(x=>x.id===selectedUserId);
+  const el = document.getElementById('user-detail');
+  if(!u){ el.innerHTML = '<div class="page-sub">Select a user to see details.</div>'; return; }
+  el.innerHTML = `
+    <div class="detail-head">
+      <div class="detail-avatar">${u.initials}</div>
+      <div><div class="cell-name" style="font-size:15px;">${u.name}</div><div class="cell-sub">${u.email}</div></div>
+    </div>
+    <div class="field">
+      <div class="field-label">Role</div>
+      <select class="role-select" onchange="changeUserRole(${u.id}, this.value)">
+        ${roleOrder.map(r=>`<option value="${r}" ${r===u.role?'selected':''}>${r}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field"><div class="field-label">Department</div><div class="field-value">${u.dept}</div></div>
+    <div class="field">
+      <div class="field-label">Status</div>
+      <div class="field-value" style="display:flex; align-items:center; justify-content:space-between;">
+        <span>${statusDot(u.status)}</span>
+        <button class="btn btn-ghost btn-sm" onclick="toggleUserStatus(${u.id})">${u.status==='active'?'Deactivate':'Reactivate'}</button>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div class="field">
+      <div class="field-label">Model access <span style="text-transform:none; font-weight:400; color:var(--text-faint);">— independent of role</span></div>
+      <div class="checkbox-row">
+        ${models.map(m => `
+          <label class="check-chip ${u.modelAccess.includes(m.name)?'checked':''}" onclick="toggleUserModel(${u.id}, '${m.name}', this)">
+            <input type="checkbox" ${u.modelAccess.includes(m.name)?'checked':''} onclick="event.stopPropagation()">${m.name}
+          </label>
+        `).join('')}
+      </div>
+      ${u.modelAccess.length===0 ? '<div class="cell-sub" style="margin-top:8px;">No models granted — this user cannot run inference yet.</div>' : ''}
+    </div>
+    <div class="divider"></div>
+    <div class="field-label" style="margin-bottom:10px;">API keys</div>
+    ${u.keys.length===0 ? '<div class="cell-sub" style="margin-bottom:12px;">No keys issued yet.</div>' : u.keys.map(k=>`
+      <div class="key-row">
+        <div><div class="mono" style="font-size:12.5px;">${k.masked}</div><div class="cell-sub">${k.label}</div></div>
+        <span class="status-dot ${k.status==='active'?'status-active':'status-revoked'}"></span>
+      </div>`).join('')}
+    <button class="btn btn-ghost" style="width:100%; justify-content:center; margin-top:6px;" onclick="generateKeyFor(${u.id})">Generate new key</button>
+  `;
+}
+
+function changeUserRole(id, role){
+  const u = users.find(x=>x.id===id);
+  u.role = role;
+  renderUsers();
+  renderUserDetail();
+  showToast(`${u.name}'s role changed to ${role}`);
+}
+function promptChangeRole(id){
+  const u = users.find(x=>x.id===id);
+  selectUser(id);
+  showToast(`Use the Role dropdown in the detail panel to change ${u.name}'s role`);
+}
+function toggleUserStatus(id){
+  const u = users.find(x=>x.id===id);
+  u.status = u.status==='active' ? 'inactive' : 'active';
+  renderUsers();
+  renderUserDetail();
+  showToast(`${u.name} ${u.status==='active' ? 'reactivated' : 'deactivated'}`);
+  closeAllDropdowns();
+}
+function toggleUserModel(userId, modelName, labelEl){
+  const u = users.find(x=>x.id===userId);
+  const has = u.modelAccess.includes(modelName);
+  if(has){
+    u.modelAccess = u.modelAccess.filter(m=>m!==modelName);
+  } else {
+    u.modelAccess.push(modelName);
+  }
+  if(labelEl){
+    labelEl.classList.toggle('checked', !has);
+    labelEl.querySelector('input').checked = !has;
+  }
+  renderUserModelMatrix();
+  showToast(`${modelName} ${!has ? 'granted to' : 'revoked from'} ${u.name}`);
+  // refresh the surrounding note about "no models granted" without a full re-render (keeps checkbox focus stable)
+  const noteHost = labelEl ? labelEl.closest('.field') : null;
+  if(noteHost){
+    let note = noteHost.querySelector('.cell-sub');
+    if(u.modelAccess.length===0 && !note){
+      const div = document.createElement('div');
+      div.className = 'cell-sub';
+      div.style.marginTop = '8px';
+      div.textContent = 'No models granted — this user cannot run inference yet.';
+      noteHost.appendChild(div);
+    } else if(u.modelAccess.length>0 && note){
+      note.remove();
+    }
+  }
+}
+
+function renderUserModelMatrix(){
+  const wrap = document.getElementById('userModelMatrixWrap');
+  if(!wrap) return;
+  wrap.innerHTML = `
+    <table class="matrix">
+      <thead><tr><th>User</th>${models.map(m=>`<th>${m.name}</th>`).join('')}</tr></thead>
+      <tbody>
+        ${users.map(u => `
+          <tr>
+            <td class="name-cell"><div class="mini-avatar">${u.initials}</div><div><div class="cell-name">${u.name}</div><div class="cell-sub">${u.role}</div></div></td>
+            ${models.map(m => {
+              const on = u.modelAccess.includes(m.name);
+              return `<td><span class="perm ${on?'perm-yes':'perm-no'}" onclick="toggleUserModel(${u.id},'${m.name}'); renderUserDetail();">${on?'✓':'✕'}</span></td>`;
+            }).join('')}
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function generateKeyFor(id){
+  const u = users.find(x=>x.id===id);
+  const rand = Math.random().toString(16).slice(2,6);
+  const masked = `sk-${rand}•••••••`;
+  u.keys.push({label:'new key', masked, status:'active'});
+  apiKeys.push({id: nextKeyId++, masked, owner:u.name, models:['llama3.2:3b'], expires:'Never', status:'active'});
+  renderUserDetail();
+  renderKeys();
+  showToast(`Generated key ${masked} for ${u.name}`);
+}
+
+/* ============================= INVITE USER MODAL ============================= */
+function openInviteModal(){
+  openModal(`
+    <div class="modal-head"><div class="modal-title">Create user</div><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="form-field"><label>Full name</label><input id="inviteName" placeholder="e.g. Morgan Reyes"></div>
+      <div class="form-field"><label>Email</label><input id="inviteEmail" placeholder="morgan@company.com"></div>
+      <div class="form-field"><label>Department</label><input id="inviteDept" placeholder="e.g. Engineering"></div>
+      <div class="form-field"><label>Role</label>
+        <select id="inviteRole">
+          <option value="viewer">viewer</option>
+          <option value="analyst">analyst</option>
+          <option value="developer" selected>developer</option>
+          <option value="admin">admin</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitInvite()">Create user</button>
+    </div>
+  `);
+}
+function submitInvite(){
+  const name = document.getElementById('inviteName').value.trim();
+  const email = document.getElementById('inviteEmail').value.trim();
+  const dept = document.getElementById('inviteDept').value.trim() || '—';
+  const role = document.getElementById('inviteRole').value;
+  if(!name || !email){ showToast('Name and email are required'); return; }
+  const initials = name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+  const u = {id: nextUserId++, initials, name, email, role, dept, status:'active', keys:[], modelAccess:['llama3.2:3b']};
+  users.unshift(u);
+  selectedUserId = u.id;
+  renderUsers();
+  renderUserDetail();
+  renderUserModelMatrix();
+  closeModal();
+  showToast(`${name} added as ${role}`);
+}
+
+/* ============================= PERMISSION MATRIX ============================= */
+function renderMatrix(){
+  const table = document.getElementById('permMatrix');
+  table.innerHTML = `
+    <thead><tr><th>Role</th><th>Chat</th><th>Code</th><th>Reasoning</th><th>Summarization</th><th>Translation</th><th>Admin</th></tr></thead>
+    <tbody>
+      ${roleOrder.map(role => `
+        <tr>
+          <td>${badgeHtml(role)}</td>
+          ${taskCols.map(task => {
+            const on = permMatrix[role][task];
+            return `<td><span class="perm ${on?'perm-yes':'perm-no'}" onclick="togglePerm('${role}','${task}')">${on?'✓':'✕'}</span></td>`;
+          }).join('')}
+        </tr>
+      `).join('')}
+    </tbody>
+  `;
+}
+function togglePerm(role, task){
+  permMatrix[role][task] = !permMatrix[role][task];
+  renderMatrix();
+  const dirty = JSON.stringify(permMatrix) !== JSON.stringify(permMatrixSaved);
+  document.getElementById('matrixSaveBar').classList.toggle('show', dirty);
+}
+function saveMatrix(){
+  permMatrixSaved = JSON.parse(JSON.stringify(permMatrix));
+  document.getElementById('matrixSaveBar').classList.remove('show');
+  showToast('Policy matrix updated — Security Layer will pick it up on next cache refresh');
+}
+function discardMatrix(){
+  permMatrix = JSON.parse(JSON.stringify(permMatrixSaved));
+  renderMatrix();
+  document.getElementById('matrixSaveBar').classList.remove('show');
+}
+
+/* ============================= API KEYS ============================= */
+function renderKeys(){
+  const body = document.getElementById('keysTableBody');
+  if(apiKeys.length===0){ body.innerHTML = '<tr class="empty-row"><td colspan="6">No keys yet.</td></tr>'; return; }
+  body.innerHTML = apiKeys.map(k => `
+    <tr>
+      <td class="mono">${k.masked}</td>
+      <td>${k.owner}</td>
+      <td>${k.models.length ? k.models.map(m=>`<span class="chip">${m}</span>`).join(' ') : '<span class="chip chip-off">none assigned</span>'}</td>
+      <td>${k.expires}</td>
+      <td>${statusDot(k.status)}</td>
+      <td>
+        <div class="menu-wrap">
+          <span class="icon-btn" onclick="toggleDropdown(event,'keyMenu${k.id}')">⋯</span>
+          <div class="dropdown" id="keyMenu${k.id}">
+            <button onclick="copyKey('${k.masked}')">📋 Copy masked key</button>
+            <button onclick="editKeyModels(${k.id})">🧩 Edit model entitlements</button>
+            <hr>
+            <button class="danger" onclick="toggleKeyStatus(${k.id})">${k.status==='active' ? '🚫 Revoke key' : '✅ Reactivate key'}</button>
+          </div>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+function copyKey(masked){ showToast(`Copied ${masked} to clipboard (demo)`); closeAllDropdowns(); }
+function toggleKeyStatus(id){
+  const k = apiKeys.find(x=>x.id===id);
+  k.status = k.status==='active' ? 'revoked' : 'active';
+  renderKeys();
+  showToast(`Key ${k.masked} ${k.status==='active'?'reactivated':'revoked'}`);
+  closeAllDropdowns();
+}
+function editKeyModels(id){
+  const k = apiKeys.find(x=>x.id===id);
+  openModal(`
+    <div class="modal-head"><div class="modal-title">Model entitlements</div><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="cell-sub" style="margin-bottom:2px;">${k.masked} · ${k.owner}</div>
+      <div class="checkbox-row" id="keyModelChips">
+        ${models.map(m => `
+          <label class="check-chip ${k.models.includes(m.name)?'checked':''}" onclick="toggleChipClass(this)">
+            <input type="checkbox" value="${m.name}" ${k.models.includes(m.name)?'checked':''}>${m.name}
+          </label>
+        `).join('')}
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveKeyModels(${id})">Save entitlements</button>
+    </div>
+  `);
+}
+function toggleChipClass(label){
+  const cb = label.querySelector('input');
+  cb.checked = !cb.checked;
+  label.classList.toggle('checked', cb.checked);
+}
+function saveKeyModels(id){
+  const k = apiKeys.find(x=>x.id===id);
+  const checked = Array.from(document.querySelectorAll('#keyModelChips input:checked')).map(c=>c.value);
+  k.models = checked;
+  renderKeys();
+  closeModal();
+  showToast(`Updated entitlements for ${k.masked}`);
+}
+function openKeyModal(){
+  openModal(`
+    <div class="modal-head"><div class="modal-title">Generate API key</div><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="form-field"><label>Owner</label>
+        <select id="keyOwner">${users.map(u=>`<option value="${u.name}">${u.name}</option>`).join('')}</select>
+      </div>
+      <div class="form-field"><label>Expiry</label>
+        <select id="keyExpiry"><option>Never</option><option>90 days</option><option>1 year</option></select>
+      </div>
+      <div class="form-field"><label>Model entitlements</label>
+        <div class="checkbox-row" id="newKeyModelChips">
+          ${models.map(m => `<label class="check-chip" onclick="toggleChipClass(this)"><input type="checkbox" value="${m.name}">${m.name}</label>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitNewKey()">Generate key</button>
+    </div>
+  `);
+}
+function submitNewKey(){
+  const owner = document.getElementById('keyOwner').value;
+  const expires = document.getElementById('keyExpiry').value;
+  const modelsChecked = Array.from(document.querySelectorAll('#newKeyModelChips input:checked')).map(c=>c.value);
+  const rand = Math.random().toString(16).slice(2,6);
+  const masked = `sk-${rand}•••••••`;
+  apiKeys.unshift({id: nextKeyId++, masked, owner, models: modelsChecked, expires, status:'active'});
+  const u = users.find(x=>x.name===owner);
+  if(u) u.keys.push({label:'generated key', masked, status:'active'});
+  renderKeys();
+  if(u && u.id===selectedUserId) renderUserDetail();
+  closeModal();
+  showToast(`Generated ${masked} for ${owner}`);
+}
+
+/* ============================= MODEL REGISTRY ============================= */
+function renderModels(){
+  const body = document.getElementById('modelsTableBody');
+  body.innerHTML = models.map((m,i) => {
+    const isCloud = m.backend.toLowerCase().includes('cloud');
+    const keyCell = !isCloud
+      ? '<span class="cell-sub">—</span>'
+      : (m.apiKey
+          ? `<span class="chip mono">${m.apiKey.slice(0,11)}••••••</span>`
+          : `<span class="badge badge-warn">not set</span>`);
+    return `
+    <tr>
+      <td class="cell-name">${m.name} ${isCloud ? '<span class="badge" style="background:#F1E7FE; color:#7C3AED; border:1px solid #DFC9FB; margin-left:4px;">☁ cloud</span>' : '<span class="badge badge-viewer" style="margin-left:4px;">on-prem</span>'}</td>
+      <td>${m.backend}</td>
+      <td>${m.tasks.slice(0,3).map(t=>`<span class="chip">${t}</span>`).join(' ')} ${m.tasks.length>3?`<span class="chip">+${m.tasks.length-3}</span>`:''}</td>
+      <td>${keyCell}</td>
+      <td>${statusDot(m.status)}</td>
+      <td class="mono">${m.context}</td>
+      <td>
+        <div class="menu-wrap">
+          <span class="icon-btn" onclick="toggleDropdown(event,'modelMenu${i}')">⋯</span>
+          <div class="dropdown" id="modelMenu${i}">
+            <button onclick="setModelStatus(${i},'active')">✅ Set active</button>
+            <button onclick="setModelStatus(${i},'staging')">🧪 Set staging</button>
+            <button onclick="setModelStatus(${i},'inactive')">📦 Retire</button>
+            ${isCloud ? `<hr><button onclick="openModelApiKeyModal(${i})">🔑 ${m.apiKey ? 'Update' : 'Set'} API key</button>` : ''}
+          </div>
+        </div>
+      </td>
+    </tr>
+  `;}).join('');
+}
+
+function openModelApiKeyModal(i){
+  const m = models[i];
+  openModal(`
+    <div class="modal-head"><div class="modal-title">${m.apiKey ? 'Update' : 'Set'} API key</div><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="cell-sub" style="margin-bottom:2px;">${m.name} · ${m.backend}</div>
+      <div class="form-field"><label>Provider API key</label><input id="modelApiKeyInput" placeholder="sk-ant-api03-…" value="${m.apiKey || ''}"></div>
+      <div class="cell-sub">Used by the Inference Adapter to authenticate calls to this cloud model. Stored server-side, never exposed to end users.</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveModelApiKey(${i})">Save key</button>
+    </div>
+  `);
+}
+function saveModelApiKey(i){
+  const val = document.getElementById('modelApiKeyInput').value.trim();
+  if(!val){ showToast('Enter a valid API key'); return; }
+  models[i].apiKey = val;
+  renderModels();
+  closeModal();
+  showToast(`API key ${models[i].apiKey ? 'saved' : 'cleared'} for ${models[i].name}`);
+}
+function setModelStatus(i, status){
+  models[i].status = status;
+  renderModels();
+  showToast(`${models[i].name} set to ${status}`);
+  closeAllDropdowns();
+}
+function openModelModal(){
+  openModal(`
+    <div class="modal-head"><div class="modal-title">Register model</div><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="form-field"><label>Model name</label><input id="modelName" placeholder="e.g. claude-sonnet-5"></div>
+      <div class="form-field"><label>Deployment</label>
+        <select id="modelDeployment" onchange="onDeploymentChange()">
+          <option value="onprem-cpu">On-prem · Ollama · CPU</option>
+          <option value="onprem-gpu">On-prem · Ollama · GPU</option>
+          <option value="cloud-anthropic" selected>Cloud · Anthropic API</option>
+          <option value="cloud-other">Cloud · Other provider API</option>
+        </select>
+      </div>
+      <div class="form-field"><label>Backend label</label><input id="modelBackend" placeholder="e.g. Anthropic API · Cloud" value="Anthropic API · Cloud"></div>
+      <div class="form-field" id="modelApiKeyField"><label>Provider API key</label><input id="modelApiKey" placeholder="sk-ant-api03-…"></div>
+      <div class="form-field"><label>Context length</label><input id="modelContext" placeholder="e.g. 200k" value="200k"></div>
+      <div class="form-field"><label>Supported tasks</label>
+        <div class="checkbox-row" id="newModelTaskChips">
+          ${['chat','code','reasoning','summarization','translation'].map(t=>`<label class="check-chip checked" onclick="toggleChipClass(this)"><input type="checkbox" value="${t}" checked>${t}</label>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitModel()">Register model</button>
+    </div>
+  `);
+}
+function onDeploymentChange(){
+  const val = document.getElementById('modelDeployment').value;
+  const backendInput = document.getElementById('modelBackend');
+  const contextInput = document.getElementById('modelContext');
+  const apiKeyField = document.getElementById('modelApiKeyField');
+  const isCloud = val.startsWith('cloud');
+  apiKeyField.style.display = isCloud ? 'flex' : 'none';
+  apiKeyField.style.flexDirection = 'column';
+  if(val==='onprem-cpu'){ backendInput.value='Ollama · CPU · On-prem'; contextInput.value='8k'; }
+  else if(val==='onprem-gpu'){ backendInput.value='Ollama · GPU · On-prem'; contextInput.value='32k'; }
+  else if(val==='cloud-anthropic'){ backendInput.value='Anthropic API · Cloud'; contextInput.value='200k'; }
+  else { backendInput.value='Cloud API · Other provider'; contextInput.value='128k'; }
+}
+function submitModel(){
+  const name = document.getElementById('modelName').value.trim();
+  const backend = document.getElementById('modelBackend').value.trim() || 'Ollama · CPU';
+  const context = document.getElementById('modelContext').value.trim() || '8k';
+  const deployment = document.getElementById('modelDeployment').value;
+  const isCloud = deployment.startsWith('cloud');
+  const apiKey = isCloud ? document.getElementById('modelApiKey').value.trim() : null;
+  const tasks = Array.from(document.querySelectorAll('#newModelTaskChips input:checked')).map(c=>c.value);
+  if(!name){ showToast('Model name is required'); return; }
+  if(isCloud && !apiKey){ showToast('A provider API key is required for cloud models'); return; }
+  models.push({name, backend, tasks: tasks.length?tasks:['chat'], status:'staging', context, apiKey});
+  renderModels();
+  renderUserModelMatrix();
+  renderUserDetail();
+  closeModal();
+  showToast(`${name} registered in staging${isCloud ? ' with its API key saved' : ''}`);
+}
+
+/* ============================= AUDIT LOG ============================= */
+function outcomeBadge(outcome){
+  if(outcome==='passed') return `<span class="badge badge-passed">passed</span>`;
+  if(outcome==='injection_detected') return `<span class="badge badge-danger">injection_detected</span>`;
+  if(outcome==='insufficient_role') return `<span class="badge badge-warn">insufficient_role</span>`;
+  return `<span class="badge badge-viewer">${outcome}</span>`;
+}
+function renderAudit(){
+  const q = (document.getElementById('auditSearch').value || '').toLowerCase();
+  const filtered = auditEvents.filter(e => !q || e.user.toLowerCase().includes(q) || e.event.toLowerCase().includes(q) || e.outcome.toLowerCase().includes(q));
+  const body = document.getElementById('auditTableBody');
+  body.innerHTML = filtered.length ? filtered.map(e => `
+    <tr><td>${e.event}</td><td>${e.user}</td><td>${e.layer}</td><td>${outcomeBadge(e.outcome)}</td><td class="mono">${e.time}</td></tr>
+  `).join('') : '<tr class="empty-row"><td colspan="5">No matching events.</td></tr>';
+
+  document.getElementById('dashAuditBody').innerHTML = auditEvents.slice(0,5).map(e => `
+    <tr><td>${e.outcome==='passed' ? '<span class="status-dot status-active"></span>' : '<span class="status-dot status-revoked"></span>'}${e.event}${e.outcome!=='passed' ? ' · '+e.outcome : ''}</td>
+    <td class="mono" style="color:var(--text-faint); text-align:right;">${e.time}</td></tr>
+  `).join('');
+}
+function exportAudit(){ showToast('Exported audit_log.csv (demo)'); }
+
+/* ============================= GLOBAL SEARCH ============================= */
+function globalSearch(q){
+  q = q.toLowerCase().trim();
+  if(!q) return;
+  const userHit = users.find(u=>u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
+  const keyHit = apiKeys.find(k=>k.masked.toLowerCase().includes(q) || k.owner.toLowerCase().includes(q));
+  const modelHit = models.find(m=>m.name.toLowerCase().includes(q));
+  if(userHit){ showSub('users', document.querySelectorAll('.nav a')[1]); selectUser(userHit.id); }
+  else if(keyHit){ showSub('keys', document.querySelectorAll('.nav a')[2]); }
+  else if(modelHit){ showSub('models', document.querySelectorAll('.nav a')[3]); }
+}
+
+/* ============================= INIT ============================= */
+renderUsers();
+renderUserDetail();
+renderMatrix();
+renderUserModelMatrix();
+renderKeys();
+renderModels();
+renderAudit();
+</script>
+
+</body>
+</html>

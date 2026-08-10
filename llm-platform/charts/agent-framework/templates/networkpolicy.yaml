@@ -11,18 +11,48 @@ spec:
   policyTypes:
     - Ingress
     - Egress
+
+  # INGRESS: Allow traffic ONLY from the Intelligent Router (Layer 3)
   ingress:
+    # Allow HTTP requests to port 8083 from Router pods
+    - from:
+        - podSelector:
+            matchLabels:
+              app: router
+      ports:
+        - protocol: TCP
+          port: 8083
+
+    # Allow Prometheus to scrape metrics on port 9090
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9090
+
+  # EGRESS: Allow outbound to Router and DNS only
   egress:
+    # Allow HTTP POST to the Router's /v1/chat/completions endpoint (port 8082)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: router
+      ports:
+        - protocol: TCP
+          port: 8082
+
+    # Allow DNS resolution (kube-dns / CoreDNS on port 53 UDP and TCP)
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ .Release.Namespace }}
-    - ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
-          protocol: TCP
+              name: kube-system
+        - podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

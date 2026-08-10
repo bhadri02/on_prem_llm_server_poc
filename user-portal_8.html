@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>GWC data.ai — AI Hub Chat</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #F8F6FC;
+    --bg-alt: #FFFFFF;
+    --surface: #FFFFFF;
+    --surface-2: #F4F0FA;
+    --surface-3: #ECE5F7;
+    --border: #E4DCF3;
+    --border-soft: #ECE6F7;
+    --text: #241C3B;
+    --text-dim: #675E85;
+    --text-faint: #9891B0;
+    --purple: #7C3AED;
+    --orange: #F97316;
+    --grad: linear-gradient(135deg, #7C3AED 0%, #F97316 100%);
+    --grad-soft: linear-gradient(135deg, rgba(124,58,237,0.10), rgba(249,115,22,0.10));
+    --success: #0EA968;
+    --danger: #D5473C;
+    --shadow: 0 2px 10px rgba(90,60,150,0.06);
+    --shadow-lg: 0 16px 40px rgba(90,60,150,0.14);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0; height:100%; overflow:hidden;}
+  body{
+    background:
+      radial-gradient(1100px 460px at 88% -8%, rgba(249,115,22,0.07), transparent 60%),
+      radial-gradient(900px 560px at -8% 8%, rgba(124,58,237,0.08), transparent 60%),
+      var(--bg);
+    color:var(--text);
+    font-family:'Inter', sans-serif;
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{ background: rgba(124,58,237,0.18); }
+  a{color:inherit;text-decoration:none;}
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:8px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  .mono{font-family:'JetBrains Mono', monospace;}
+  svg{ display:block; }
+  .icon{ stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  button{ font-family:'Inter'; }
+
+  .btn{
+    border:none; cursor:pointer; font-family:'Inter'; font-weight:600; font-size:13.5px; border-radius:10px;
+    padding:10px 16px; display:inline-flex; align-items:center; gap:8px; transition:.2s;
+  }
+  .btn-primary{ background:var(--grad); color:white; box-shadow:0 8px 20px rgba(124,58,237,.24); }
+  .btn-primary:hover{ filter:brightness(1.05); transform:translateY(-1px); }
+  .btn-ghost{ background:var(--surface); color:var(--text-dim); border:1px solid var(--border); }
+  .btn-ghost:hover{ color:var(--text); border-color:var(--purple); }
+
+  .logo-mark{ display:flex; align-items:center; gap:11px; padding:2px 8px 0; }
+  .logo-glyph{
+    width:34px;height:34px;border-radius:10px; box-shadow:0 6px 16px rgba(124,58,237,.28);
+    overflow:hidden; flex:none; background:var(--surface-2); display:flex; align-items:center; justify-content:center;
+  }
+  .logo-glyph img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .logo-text{ font-family:'Space Grotesk'; font-weight:700; font-size:15.5px; line-height:1.15; color:var(--text);}
+  .logo-text span{ display:block; font-family:'Inter'; font-weight:500; font-size:11px; color:var(--text-faint); letter-spacing:.4px; text-transform:uppercase; }
+
+  .divider{ height:1px; background:var(--border-soft); margin:6px 0; }
+
+  .avatar{ width:32px;height:32px;border-radius:9px; background:var(--grad); display:flex;align-items:center;justify-content:center; font-weight:700; font-size:13px; font-family:'Space Grotesk'; color:#fff;}
+  .sf-row{ display:flex; align-items:center; gap:10px; }
+  .sf-name{ font-size:13px; font-weight:600; }
+  .sf-role{ font-size:11.5px; color:var(--text-faint); }
+  .sidebar-foot{ padding:12px; border-radius:12px; background:var(--surface-2); border:1px solid var(--border-soft); position:relative; cursor:pointer; }
+
+  .menu-wrap{ position:relative; }
+  .dropdown{
+    position:absolute; background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    box-shadow:var(--shadow-lg); z-index:60; overflow:hidden; display:none;
+  }
+  .dropdown.open{ display:block; }
+
+  /* ================= CHAT SHELL ================= */
+  .chat-shell{ display:grid; grid-template-columns:270px 1fr; height:100vh; overflow:hidden; }
+  .chat-sidebar{ background:var(--bg-alt); border-right:1px solid var(--border-soft); padding:20px 16px; display:flex; flex-direction:column; gap:18px; height:100vh; overflow-y:auto; }
+  .new-chat-btn{ width:100%; justify-content:center; }
+
+  .auto-route-card{
+    background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:13px 14px;
+    box-shadow:var(--shadow);
+  }
+  .arc-label{ font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:var(--text-faint); font-weight:700; margin-bottom:8px; }
+  .arc-row{ display:flex; align-items:center; gap:8px; }
+  .arc-model{ font-weight:700; font-size:13.5px; color:var(--text); }
+  .arc-sub{ font-size:11px; color:var(--text-faint); margin-top:6px; line-height:1.4; }
+  .model-dot{ width:8px;height:8px;border-radius:50%; background:var(--text-faint); flex:none; transition:.2s; }
+  .model-dot.routed{ background:var(--success); box-shadow:0 0 6px rgba(14,169,104,.4); }
+
+  .model-list-title{ font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:var(--text-faint); font-weight:700; margin:4px 0 -6px; }
+  .model-item{ display:flex; align-items:center; justify-content:space-between; padding:8px 10px; border-radius:8px; font-size:12.5px; color:var(--text-dim); cursor:default; }
+  .model-item.locked{ opacity:.5; }
+  .lock-ic{ width:13px;height:13px; color:var(--text-faint); }
+
+  .session-item{ padding:10px 12px; border-radius:9px; font-size:13px; color:var(--text-dim); cursor:pointer; display:flex; flex-direction:column; gap:2px; position:relative; }
+  .session-item:hover{ background:var(--surface-2); }
+  .session-item.active{ background:var(--surface-2); color:var(--text); border:1px solid var(--border-soft); font-weight:600;}
+  .session-item .s-time{ font-size:11px; color:var(--text-faint); font-weight:400; }
+  .session-item .s-del{ position:absolute; right:8px; top:9px; opacity:0; font-size:11px; color:var(--text-faint); }
+  .session-item:hover .s-del{ opacity:1; }
+  .session-item .s-del:hover{ color:var(--danger); }
+
+  .chat-main{ display:flex; flex-direction:column; height:100vh; overflow:hidden; }
+  .chat-header{ display:flex; align-items:center; justify-content:space-between; padding:16px 28px; border-bottom:1px solid var(--border-soft); background:var(--bg-alt); }
+  .chat-header .htitle{ font-family:'Space Grotesk'; font-weight:600; font-size:15.5px; }
+  .chat-header .hsub{ font-size:12px; color:var(--text-faint); margin-top:2px; }
+
+  .chat-body{ flex:1; overflow-y:auto; padding:28px 8%; display:flex; flex-direction:column; gap:20px; }
+  .msg-row{ display:flex; gap:12px; max-width:720px; }
+  .msg-row.user{ align-self:flex-end; flex-direction:row-reverse; }
+  .msg-avatar{ width:30px;height:30px;border-radius:9px; flex:none; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; font-family:'Space Grotesk'; }
+  .msg-avatar.assistant{ background:var(--grad); color:#fff; }
+  .msg-avatar.user{ background:var(--surface-3); border:1px solid var(--border); color:var(--text-dim); }
+  .bubble{ padding:13px 16px; border-radius:14px; font-size:14px; line-height:1.55; }
+  .bubble.assistant{ background:var(--surface); border:1px solid var(--border-soft); border-top-left-radius:4px; color:var(--text); box-shadow:var(--shadow); }
+  .bubble.user{ background:var(--grad); border-top-right-radius:4px; color:white; }
+  .msg-meta{ font-size:11px; color:var(--text-faint); margin-top:6px; }
+  .empty-state{ margin:auto; text-align:center; color:var(--text-faint); font-size:13.5px; }
+
+  .typing{ display:inline-flex; gap:4px; align-items:center; }
+  .typing span{ width:6px;height:6px;border-radius:50%; background:var(--purple); animation:blink 1.2s infinite ease-in-out; }
+  .typing span:nth-child(2){ animation-delay:.2s; }
+  .typing span:nth-child(3){ animation-delay:.4s; }
+  @keyframes blink{ 0%,80%,100%{opacity:.25;} 40%{opacity:1;} }
+
+  .chat-input-wrap{ padding:18px 8% 26px; background:var(--bg); }
+  .chat-input{
+    display:flex; align-items:flex-end; gap:10px; background:var(--surface); border:1px solid var(--border);
+    border-radius:16px; padding:10px 10px 10px 18px; box-shadow:var(--shadow-lg);
+  }
+  .chat-input textarea{
+    flex:1; background:transparent; border:none; outline:none; resize:none; color:var(--text); font-family:'Inter';
+    font-size:14px; line-height:1.5; max-height:120px; padding:8px 0;
+  }
+  .chat-input textarea::placeholder{ color:var(--text-faint); }
+  .send-btn{ width:38px;height:38px; border-radius:11px; background:var(--grad); border:none; display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none; }
+  .send-btn:disabled{ opacity:.4; cursor:not-allowed; }
+  .input-hint{ text-align:center; font-size:11px; color:var(--text-faint); margin-top:10px; }
+
+  .toast-container{ position:fixed; bottom:24px; right:24px; display:flex; flex-direction:column; gap:10px; z-index:300; }
+  .toast{
+    background:var(--text); color:#fff; padding:12px 18px; border-radius:10px; font-size:13.5px; box-shadow:var(--shadow-lg);
+    display:flex; align-items:center; gap:10px; animation:toastIn .25s ease; max-width:320px;
+  }
+  .toast .dot-ok{ width:8px;height:8px;border-radius:50%; background:#4ADE80; flex:none;}
+  .toast.warn .dot-ok{ background:#FBBF24; }
+  @keyframes toastIn{ from{opacity:0; transform:translateY(8px);} to{opacity:1; transform:translateY(0);} }
+
+
+  @media (max-width: 900px){
+    .chat-shell{ grid-template-columns:1fr; }
+    .chat-sidebar{ display:none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="chat-shell">
+  <aside class="chat-sidebar">
+    <div class="logo-mark">
+      <div class="logo-glyph"><img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTjuI6Baakf9tjiVvVBalW36h9X1UCJbbwrKBkcB94MEQ&s=10" alt="GWC data.ai logo"></div>
+      <div class="logo-text">GWC data.ai<span>AI Hub Chat</span></div>
+    </div>
+
+    <button class="btn btn-primary new-chat-btn" onclick="newChat()">
+      <svg class="icon" width="15" height="15" viewBox="0 0 24 24" stroke="white"><path d="M12 5v14M5 12h14"/></svg>
+      New chat
+    </button>
+
+    <div class="auto-route-card">
+      <div class="arc-label">Model routing</div>
+      <div class="arc-row">
+        <span class="model-dot" id="modelDot"></span>
+        <span class="arc-model mono" id="modelSelectLabel">Not yet routed</span>
+      </div>
+      <div class="arc-sub" id="modelRouteSub">Send your first message and the Router will pick a model based on the task and complexity</div>
+    </div>
+
+    <div>
+      <div class="model-list-title">Your entitled models</div>
+      <div id="modelListSidebar"></div>
+    </div>
+
+    <div style="flex:1;"></div>
+
+    <div class="sidebar-foot" onclick="toggleDropdown(event,'accountMenu')">
+      <div class="sf-row">
+        <div class="avatar">RM</div>
+        <div><div class="sf-name">Rafael Mendes</div><div class="sf-role">Developer role</div></div>
+      </div>
+      <div class="dropdown" id="accountMenu" style="left:0; right:0; bottom:calc(100% + 6px); top:auto;">
+        <div style="padding:6px;">
+          <div style="padding:9px 10px; font-size:12.5px; color:var(--text-faint);" class="mono">rafael@company.com</div>
+          <div style="padding:9px 10px; cursor:pointer; border-radius:8px; font-size:13px;" onmouseover="this.style.background='var(--surface-2)'" onmouseout="this.style.background='transparent'" onclick="showToast('Signed out (demo only)')">↩️ Sign out</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <div class="chat-main">
+    <div class="chat-header">
+      <div>
+        <div class="htitle" id="chatTitle">Q3 sales summary draft</div>
+        <div class="hsub" id="chatSub">Model: llama3.2:3b · Task: summarization</div>
+      </div>
+      <div class="sf-row">
+        <button class="btn btn-ghost" onclick="exportChat()">
+          <svg class="icon" width="14" height="14" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4"/></svg>
+          Export
+        </button>
+      </div>
+    </div>
+
+    <div class="chat-body" id="chatBody"></div>
+
+    <div class="chat-input-wrap">
+      <div class="chat-input">
+        <textarea rows="1" placeholder="Message GWC data.ai… (Shift+Enter for a new line)" id="chatInput"></textarea>
+        <button class="send-btn" id="sendBtn" onclick="sendDemo()">
+          <svg class="icon" width="17" height="17" viewBox="0 0 24 24" stroke="white"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+      <div class="input-hint">Responses stream token-by-token from the Intelligent Router · claude-haiku-4-5 and gpt-oss:20b are not in your model entitlements</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+/* ============================= STATE ============================= */
+let models = [
+  {name:'llama3.2:3b', ready:true, entitled:true, cloud:false},
+  {name:'claude-sonnet-5', ready:true, entitled:true, cloud:true},
+  {name:'mixtral:8x7b', ready:true, entitled:true, cloud:false},
+  {name:'claude-haiku-4-5', ready:true, entitled:false, cloud:true},
+  {name:'gpt-oss:20b', ready:false, entitled:false, cloud:false},
+];
+let currentModel = 'llama3.2:3b';
+
+let sessions = [
+  {id:1, title:'Q3 sales summary draft', time:'Today · 2:14 PM', task:'summarization', model:'llama3.2:3b', routed:true,
+   messages:[
+     {role:'assistant', text:"Hi Rafael — I'm ready to help. You're on the <b>developer</b> role, so chat, code, reasoning, summarization, and translation are all available on your entitled models. What are we working on?", meta:'llama3.2:3b · 14:01:52'},
+     {role:'user', text:'Summarize the attached Q3 sales report into three bullet points for the leadership deck.', meta:'You · 14:02:03'},
+     {role:'assistant', text:"Here's a tight three-point summary for the deck:<br><br>• Revenue grew 14% quarter-over-quarter, led by the EMEA region.<br>• Enterprise renewals held at 96%, ahead of the 92% target.<br>• New logo acquisition slowed in SMB, offset by expansion revenue.", meta:'llama3.2:3b · 14:02:09 · cache miss · 340 tokens'},
+   ]},
+];
+let nextSessionId = 2;
+let currentSessionId = 1;
+let sending = false;
+
+/* ============================= TOAST ============================= */
+function showToast(msg, warn){
+  const c = document.getElementById('toastContainer');
+  const t = document.createElement('div');
+  t.className = 'toast' + (warn ? ' warn' : '');
+  t.innerHTML = `<span class="dot-ok"></span><span>${msg}</span>`;
+  c.appendChild(t);
+  setTimeout(()=>{ t.style.opacity='0'; t.style.transition='.3s'; setTimeout(()=>t.remove(),300); }, 2600);
+}
+
+/* ============================= DROPDOWNS ============================= */
+function closeAllDropdowns(except){
+  document.querySelectorAll('.dropdown.open').forEach(d=>{ if(d.id!==except) d.classList.remove('open'); });
+}
+function toggleDropdown(evt, id){
+  evt.stopPropagation();
+  const el = document.getElementById(id);
+  const willOpen = !el.classList.contains('open');
+  closeAllDropdowns(id);
+  el.classList.toggle('open', willOpen);
+}
+document.addEventListener('click', ()=>closeAllDropdowns());
+
+/* ============================= MODEL DISPLAY (read-only, auto-routed) ============================= */
+function classifyMessage(text){
+  const lower = text.toLowerCase();
+  const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
+  const complex = wordCount > 40 || /(comprehensive|detailed|in-depth|architecture|multi-step|end-to-end|thorough)/.test(lower);
+
+  let task = 'chat';
+  if (/(translate|translation|in spanish|in french|in german|in japanese)/.test(lower)) task = 'translation';
+  else if (/(code|bug|function|refactor|error|api|class |script|python|javascript|stack trace|debug)/.test(lower)) task = 'code';
+  else if (/(summarize|summary|tl;dr|condense|key points)/.test(lower)) task = 'summarization';
+  else if (/(why|explain|analyze|analyse|compare|reasoning|because|trade-?off)/.test(lower)) task = 'reasoning';
+
+  let model;
+  if (task === 'translation') model = complex ? 'claude-sonnet-5' : 'claude-haiku-4-5';
+  else if (task === 'code') model = complex ? 'claude-sonnet-5' : 'llama3.2:3b';
+  else if (task === 'summarization') model = complex ? 'claude-sonnet-5' : 'llama3.2:3b';
+  else if (task === 'reasoning') model = 'claude-sonnet-5';
+  else model = complex ? 'claude-sonnet-5' : 'llama3.2:3b';
+
+  return {task, model, complex, wordCount};
+}
+function renderModelMenu(){
+  const sidebar = document.getElementById('modelListSidebar');
+  sidebar.innerHTML = models.map(m => `
+    <div class="model-item ${m.entitled ? '' : 'locked'}">
+      <span>${m.name} ${m.cloud ? '<span style="color:var(--purple); font-size:10px; font-weight:700;">☁</span>' : ''}</span>
+      ${m.entitled
+        ? `<span style="color:var(--success); font-size:11px;">● ${m.ready?'ready':'offline'}</span>`
+        : `<svg class="icon lock-ic" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="9" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>`}
+    </div>
+  `).join('');
+}
+function resetRoutingCard(){
+  currentModel = null;
+  document.getElementById('modelDot').classList.remove('routed');
+  document.getElementById('modelSelectLabel').textContent = 'Not yet routed';
+  document.getElementById('modelRouteSub').textContent = 'Send your first message and the Router will pick a model based on the task and complexity';
+}
+function applyRouting(s, result){
+  currentModel = result.model;
+  s.task = result.task;
+  s.model = result.model;
+  s.routed = true;
+  document.getElementById('modelDot').classList.add('routed');
+  document.getElementById('modelSelectLabel').textContent = currentModel;
+  document.getElementById('modelRouteSub').textContent =
+    `Classified as ${result.task} · ${result.complex ? 'higher complexity' : 'standard complexity'} (${result.wordCount} words)`;
+}
+function setCurrentModelForSession(s){
+  if(s && s.routed){
+    currentModel = s.model;
+    document.getElementById('modelDot').classList.add('routed');
+    document.getElementById('modelSelectLabel').textContent = currentModel;
+    document.getElementById('modelRouteSub').textContent = `Classified as ${s.task}`;
+  } else {
+    resetRoutingCard();
+  }
+}
+
+/* ============================= SESSIONS (single active conversation — no history UI) ============================= */
+function newChat(){
+  const s = {id: nextSessionId++, title:'New chat', time:'Just now', task:null, model:null, routed:false, messages:[]};
+  sessions = [s];
+  currentSessionId = s.id;
+  setCurrentModelForSession(s);
+  renderChatBody();
+  renderChatHeader();
+}
+
+/* ============================= CHAT RENDERING ============================= */
+function currentSession(){ return sessions.find(s=>s.id===currentSessionId); }
+
+function renderChatHeader(){
+  const s = currentSession();
+  document.getElementById('chatTitle').textContent = s ? s.title : 'No chat selected';
+  renderChatSub();
+}
+function renderChatSub(){
+  const s = currentSession();
+  document.getElementById('chatSub').textContent = s
+    ? (s.routed ? `Model: ${s.model} · Task: ${s.task}` : 'Model: awaiting first message')
+    : '';
+}
+function bubbleHtml(m){
+  if(m.role==='user'){
+    return `<div class="msg-row user"><div class="msg-avatar user">RM</div><div><div class="bubble user">${m.text}</div><div class="msg-meta">${m.meta}</div></div></div>`;
+  }
+  return `<div class="msg-row assistant"><div class="msg-avatar assistant">A</div><div><div class="bubble assistant">${m.text}</div><div class="msg-meta">${m.meta}</div></div></div>`;
+}
+function renderChatBody(){
+  const body = document.getElementById('chatBody');
+  const s = currentSession();
+  if(!s){ body.innerHTML = '<div class="empty-state">No chat selected — start a new one from the sidebar.</div>'; return; }
+  if(s.messages.length===0){
+    body.innerHTML = `<div class="empty-state">Nothing here yet. Send a message and the Router will pick a model for you.</div>`;
+    return;
+  }
+  body.innerHTML = s.messages.map(bubbleHtml).join('');
+  body.scrollTop = body.scrollHeight;
+}
+
+/* ============================= SEND MESSAGE ============================= */
+function nowTime(){
+  const d = new Date();
+  return d.toTimeString().slice(0,8);
+}
+function sendDemo(){
+  if(sending) return;
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if(!text) return;
+  let s = currentSession();
+  if(!s){ newChat(); s = currentSession(); }
+
+  const isFirstMessage = !s.routed;
+  if(isFirstMessage){
+    const result = classifyMessage(text);
+    applyRouting(s, result);
+  }
+
+  s.messages.push({role:'user', text: text.replace(/</g,'&lt;'), meta:`You · ${nowTime()}`});
+  if(s.messages.length===1 || s.title==='New chat'){
+    s.title = text.length>34 ? text.slice(0,34)+'…' : text;
+  }
+  renderChatBody();
+  renderChatHeader();
+  input.value = '';
+  input.style.height = 'auto';
+
+  sending = true;
+  document.getElementById('sendBtn').disabled = true;
+  const body = document.getElementById('chatBody');
+  const typingRow = document.createElement('div');
+  typingRow.className = 'msg-row assistant';
+  typingRow.innerHTML = `<div class="msg-avatar assistant">A</div><div><div class="bubble assistant"><span class="typing"><span></span><span></span><span></span></div></div></div>`;
+  body.appendChild(typingRow);
+  body.scrollTop = body.scrollHeight;
+
+  setTimeout(()=>{
+    typingRow.remove();
+    s.messages.push({
+      role:'assistant',
+      text:`Got it — routing this to <b>${currentModel}</b> via the ${s.task} task path. (Demo response — this wireframe simulates streaming for presentation purposes.)`,
+      meta:`${currentModel} · ${nowTime()} · cache miss`
+    });
+    renderChatBody();
+    sending = false;
+    document.getElementById('sendBtn').disabled = false;
+  }, 900);
+}
+function exportChat(){
+  const s = currentSession();
+  showToast(s ? `Exported "${s.title}" transcript (demo)` : 'No chat to export');
+}
+
+document.getElementById('chatInput').addEventListener('keydown', function(e){
+  if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); sendDemo(); }
+});
+document.getElementById('chatInput').addEventListener('input', function(){
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+
+/* ============================= INIT ============================= */
+renderModelMenu();
+setCurrentModelForSession(currentSession());
+renderChatHeader();
+renderChatBody();
+</script>
+
+</body>
+</html>

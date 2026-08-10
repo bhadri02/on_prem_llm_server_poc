@@ -1,105 +1,126 @@
-# agent-framework
+# agent-framework Helm Chart
 
-Agent Framework sub-chart for the Enterprise On-Premises LLM Platform.
+Packages the Agent Framework (Layer 6 — POC) as a Kubernetes Deployment. The service
+runs on port 8083 (main API) and port 9090 (Prometheus metrics).
 
-## Purpose
+## Overview
 
-The agent-framework handles agentic multi-step tasks dispatched by the router. It orchestrates tool calls and multi-turn reasoning sequences, allowing the platform to fulfill complex requests that require planning, iterative execution, or external tool use:
+The Agent Framework handles agentic requests routed from the Intelligent Router. It runs
+a LangGraph ReAct loop with three bound tools (`calculator`, `get_current_time`,
+`web_search`), routes all LLM sub-calls through the Router's `/v1/chat/completions`
+endpoint, and returns a fully-populated IMF response.
 
-- **Multi-step reasoning** — decomposes complex prompts into sub-tasks and executes them sequentially
-- **Tool call orchestration** — manages calls to external tools and incorporates results back into the reasoning chain
-- **Agentic task dispatch** — receives routed requests from `router:8082` and forwards completed responses upstream
-- **Inference delegation** — forwards individual inference calls to `inference-ollama:8087` as needed during task execution
+## ⚠️ Mandatory Deploy-Time Overrides
 
-## Service Details
+### 1. Image tag
 
-| Property | Value |
-|---|---|
-| Port | `8083` |
-| Metrics port | `9090` |
-| Health endpoint | `GET /health` |
-| Metrics endpoint | `GET /metrics` |
-| Cluster URL | `http://agent-framework:8083` |
-
-## Docker Build
+The chart defaults `image.tag` to an empty string. **You must set a real tag at deploy
+time.** Using an empty tag will fall back to `appVersion` from `Chart.yaml` which may
+not match any available image.
 
 ```bash
-docker build -t registry.local/agent-framework:dev ./agent_framework
-docker push registry.local/agent-framework:dev
+helm upgrade --install agent-framework ./charts/agent-framework \
+  --set image.tag=v1.2.3
 ```
 
-## Installation
+### 2. GATEWAY_API_KEY
+
+The default value `poc-secret-key` is a **placeholder**. It must be replaced with the
+real API key before deploying to any environment outside a local developer workstation.
 
 ```bash
-helm install agent-framework ./charts/agent-framework \
-  --namespace llm-poc \
-  --set image.tag=dev
+helm upgrade --install agent-framework ./charts/agent-framework \
+  --set image.tag=v1.2.3 \
+  --set env.GATEWAY_API_KEY="your-real-secret-key"
 ```
+
+For production use a proper secret management solution (HashiCorp Vault — Phase 2).
+
+---
 
 ## Values Reference
 
 | Key | Default | Description |
-|---|---|---|
-| `replicaCount` | `1` | Number of pod replicas |
-| `image.repository` | `registry.local/agent-framework` | Container image repository |
-| `image.tag` | `""` | Image tag; empty string falls back to `latest` at render time |
+|-----|---------|-------------|
+| `replicaCount` | `1` | Number of pod replicas (POC: single instance) |
+| `image.repository` | `registry.local/agent-framework` | OCI image repository |
+| `image.tag` | `""` | **Must be overridden at deploy time** |
 | `image.pullPolicy` | `IfNotPresent` | Kubernetes image pull policy |
 | `service.type` | `ClusterIP` | Kubernetes Service type |
-| `service.port` | `8083` | HTTP service port |
-| `metricsPort` | `9090` | Prometheus metrics scrape port |
-| `resources.requests.cpu` | `100m` | CPU request |
-| `resources.requests.memory` | `256Mi` | Memory request |
+| `service.port` | `8083` | Service port (main API) |
+| `env.ROUTER_URL` | `http://router:8082` | Base URL of the Intelligent Router |
+| `env.LOG_LEVEL` | `INFO` | Structured log level (`DEBUG`/`INFO`/`WARNING`/`ERROR`) |
+| `env.MAX_AGENT_STEPS` | `10` | Max ReAct loop iterations (range: 1–50) |
+| `env.TOOL_CATALOG_PATH` | `/config/tools/catalog.yaml` | Path to the mounted tool catalog |
+| `env.GATEWAY_API_KEY` | `poc-secret-key` | **Must be overridden at deploy time** |
+| `env.PORT` | `8083` | Uvicorn listen port (main app) |
+| `env.METRICS_PORT` | `9090` | Uvicorn listen port (metrics app) |
+| `resources.requests.cpu` | `200m` | CPU request |
+| `resources.requests.memory` | `512Mi` | Memory request |
 | `resources.limits.cpu` | `1` | CPU limit |
 | `resources.limits.memory` | `1Gi` | Memory limit |
-| `autoscaling.enabled` | `false` | Enable HPA (Phase 2) |
-| `vault.enabled` | `false` | Enable Vault secret injection (Phase 2) |
-| `secretRef.name` | `llm-poc-secrets` | Name of the Kubernetes Secret injected via `envFrom` |
-| `serviceAccount.name` | `llm-platform` | ServiceAccount name for the pod |
-| `livenessProbe.httpGet.path` | `/health` | Liveness probe HTTP path |
-| `livenessProbe.httpGet.port` | `8083` | Liveness probe port |
-| `livenessProbe.initialDelaySeconds` | `15` | Seconds before first liveness check |
-| `livenessProbe.periodSeconds` | `15` | Liveness check interval |
-| `livenessProbe.timeoutSeconds` | `5` | Liveness check timeout |
-| `livenessProbe.failureThreshold` | `3` | Consecutive failures before restart |
-| `livenessProbe.successThreshold` | `1` | Successes required to mark live |
-| `readinessProbe.httpGet.path` | `/health` | Readiness probe HTTP path |
-| `readinessProbe.httpGet.port` | `8083` | Readiness probe port |
-| `readinessProbe.initialDelaySeconds` | `15` | Seconds before first readiness check |
-| `readinessProbe.periodSeconds` | `15` | Readiness check interval |
-| `readinessProbe.timeoutSeconds` | `5` | Readiness check timeout |
-| `readinessProbe.failureThreshold` | `3` | Consecutive failures before marking not-ready |
-| `readinessProbe.successThreshold` | `1` | Successes required to mark ready |
-| `env` | `{}` | Additional environment variables as key/value map |
-| `persistence.enabled` | `false` | Mount a PersistentVolumeClaim (agent-framework is stateless) |
-| `persistence.size` | `""` | PVC size (e.g. `1Gi`) |
-| `persistence.storageClass` | `""` | StorageClass; empty uses cluster default |
-| `persistence.mountPath` | `/data` | Container mount path for PVC |
-| `ingress.enabled` | `false` | Expose agent-framework via NGINX Ingress (not needed for internal service) |
-| `ingress.host` | `""` | Ingress hostname |
-| `ingress.servicePort` | `8083` | Backend service port for Ingress rule |
+| `autoscaling.enabled` | `false` | HPA disabled for POC (enable in Phase 2) |
+| `vault.enabled` | `false` | Vault injection disabled for POC (enable in Phase 2) |
+| `observability.metrics.enabled` | `true` | Create a Prometheus `ServiceMonitor` |
+| `observability.metrics.port` | `9090` | Port scraped by Prometheus |
 
-## Architecture
+---
 
-```
-router:8082
-        │
-        ▼
-agent-framework:8083
-   ┌──────────────────────────┐
-   │  multi-step reasoning    │
-   │  tool call orchestration │
-   └──────────┬───────────────┘
-              │
-              ▼
-    inference-ollama:8087
-```
+## Endpoints
 
-## Observability
+| Path | Port | Description |
+|------|------|-------------|
+| `POST /agent/run` | 8083 | Main agentic request endpoint |
+| `GET /health` | 8083 | Liveness/readiness check |
+| `GET /metrics` | 9090 | Prometheus text exposition |
 
-- Metrics exposed at `:9090/metrics` — scraped by Prometheus via the bundled `ServiceMonitor`
-- ServiceMonitor targets the `metrics` named port at a 30-second interval
-- Health endpoint at `:8083/health` used by liveness and readiness probes
+---
 
 ## Network Policy
 
-The bundled `NetworkPolicy` restricts ingress and egress to pods within the same namespace (`llm-poc`), plus unrestricted DNS on UDP/TCP port 53. Istio mTLS enforcement is deferred to Phase 2.
+The chart deploys a `NetworkPolicy` that restricts traffic to:
+
+- **Ingress**: Only pods with label `app: router` may send traffic to port 8083.
+  The `monitoring` namespace may scrape port 9090.
+- **Egress**: Only outbound connections to pods labelled `app: router` on TCP 8082,
+  and DNS (port 53 UDP/TCP) to `kube-system`.
+
+---
+
+## Tool Catalog
+
+The tool catalog (`catalog.yaml`) is bundled in a `ConfigMap` and mounted at
+`/config/tools/catalog.yaml` inside the container. To modify the tool set, update
+`templates/configmap.yaml` and redeploy.
+
+---
+
+## POC Constraints
+
+The following production features are disabled in this chart and are deferred to Phase 2:
+
+- `autoscaling.enabled: false` — single replica only
+- `vault.enabled: false` — secrets are plain env vars
+- Plain HTTP between services (no Istio mTLS)
+- In-memory session store (no Redis)
+- Mocked `web_search` tool (no real search API)
+
+---
+
+## Example Install
+
+```bash
+# Local dev
+helm upgrade --install agent-framework ./llm-platform/charts/agent-framework \
+  --namespace llm-platform \
+  --create-namespace \
+  --set image.tag=latest \
+  --set env.ROUTER_URL=http://router:8082
+
+# Any non-local environment — always override key and tag
+helm upgrade --install agent-framework ./llm-platform/charts/agent-framework \
+  --namespace llm-platform \
+  --set image.tag=v1.0.0 \
+  --set env.GATEWAY_API_KEY="<your-real-key>" \
+  --set env.ROUTER_URL=http://router.llm-platform.svc.cluster.local:8082
+```

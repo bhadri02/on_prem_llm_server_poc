@@ -137,12 +137,12 @@ foreach ($svc in $services) {
 
     # Build env var string for the new window
     # Re-export all vars from local.env into the child process
-    $envBlock = Get-Content $ENV_FILE |
+    $envBlock = (Get-Content $ENV_FILE |
         Where-Object { $_ -match '^\s*[^#]' -and $_ -match '=' } |
         ForEach-Object {
             $parts = $_ -split '=', 2
             "`$env:$($parts[0].Trim()) = '$($parts[1].Trim())'"
-        } | Join-String -Separator "; "
+        }) -join "; "
 
     # Override METRICS_PORT per-service to avoid port collisions
     if ($svc.MetricsPort) {

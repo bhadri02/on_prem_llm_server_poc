@@ -12,31 +12,62 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "agent-framework.labels" . | nindent 8 }}
+        {{- include "agent-framework.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
-      serviceAccountName: {{ .Values.serviceAccount.name | default "llm-platform" }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
-        - name: agent-framework
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default "latest" }}"
+        - name: {{ .Chart.Name }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
+            # Main FastAPI application port
             - name: http
-              containerPort: {{ .Values.service.port }}
+              containerPort: 8083
               protocol: TCP
+            # Prometheus metrics port (separate ASGI app)
             - name: metrics
-              containerPort: {{ .Values.metricsPort }}
+              containerPort: 9090
               protocol: TCP
-          envFrom:
-            - secretRef:
-                name: {{ .Values.secretRef.name }}
           env:
-            {{- range $k, $v := .Values.env }}
-            - name: {{ $k }}
-              value: {{ $v | quote }}
+            {{- range $key, $value := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
             {{- end }}
+          volumeMounts:
+            # Mount the tool catalog ConfigMap at /config/tools/
+            - name: tool-catalog
+              mountPath: /config/tools
+              readOnly: true
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:
             {{- toYaml .Values.readinessProbe | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tool-catalog
+          configMap:
+            name: {{ include "agent-framework.configmapName" . }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
