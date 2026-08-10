@@ -49,7 +49,7 @@ import time
 from typing import Any, Dict, Optional
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 
 from admin_portal.config import settings
@@ -60,8 +60,9 @@ from admin_portal.metrics import (
     llm_portal_requests_total,
 )
 from admin_portal.schemas.errors import ErrorResponse
-from admin_portal.schemas.models import ModelStatusPatch
+from admin_portal.schemas.models import ModelApiKeyPatch, ModelRegisterRequest, ModelStatusPatch
 from admin_portal.services.proxy import ProxyUnavailableError, async_proxy
+from admin_portal.services.session_auth import get_current_session, require_admin
 
 # ---------------------------------------------------------------------------
 # Module-level HTTP client — reused across requests for connection pooling.
@@ -80,7 +81,7 @@ _ALLOWED_STATUSES = ["active", "retired", "staging"]
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
-router = APIRouter(tags=["models"])
+router = APIRouter(tags=["models"], dependencies=[Depends(get_current_session)])
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +161,7 @@ async def list_models() -> Response:
         "with ``allowed_values`` if the value is invalid.  Returns HTTP 404 "
         "if the model does not exist.  Returns HTTP 502 on upstream failure."
     ),
+    dependencies=[Depends(require_admin)],
 )
 async def update_model_status(name: str, request: Request) -> Response:
     """Proxy a status PATCH request to the Model Registry.
@@ -262,6 +264,144 @@ async def update_model_status(name: str, request: Request) -> Response:
         )
 
     # Propagate all other upstream responses unchanged (Req 7.3)
+    return Response(
+        content=upstream_response.content,
+        status_code=upstream_response.status_code,
+        media_type=upstream_response.headers.get("content-type", "application/json"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /portal/models  — register a new model
+# ---------------------------------------------------------------------------
+
+_ENDPOINT_REGISTER = "/portal/models"
+
+
+@router.post(
+    "/models",
+    summary="Register a new model",
+    description=(
+        "Register a new model in the Model Registry. api_key is required "
+        "for cloud backends (e.g. backend='anthropic') and stored server-side "
+        "— it is never echoed back in any response. Returns HTTP 409 if a "
+        "model with the same name already exists."
+    ),
+    dependencies=[Depends(require_admin)],
+)
+async def register_model(body: ModelRegisterRequest) -> Response:
+    upstream_url = f"{settings.MODEL_REGISTRY_URL}/models/"
+    t_start = time.monotonic()
+
+    try:
+        upstream_response = await async_proxy(
+            _client,
+            "POST",
+            upstream_url,
+            json=body.model_dump(),
+            timeout=_PROXY_TIMEOUT,
+            headers={"X-Api-Key": settings.REGISTRY_API_KEY} if settings.REGISTRY_API_KEY else None,
+        )
+    except ProxyUnavailableError:
+        latency = time.monotonic() - t_start
+        llm_portal_latency_seconds.labels(endpoint=_ENDPOINT_REGISTER).observe(latency)
+        llm_portal_requests_total.labels(endpoint=_ENDPOINT_REGISTER, status="5xx").inc()
+        llm_portal_errors_total.labels(
+            endpoint=_ENDPOINT_REGISTER, error_code="upstream_unavailable"
+        ).inc()
+        error_body = ErrorResponse(
+            error="upstream_unavailable",
+            message="The Model Registry is unreachable or timed out.",
+            upstream="model-registry",
+        )
+        return Response(
+            content=error_body.model_dump_json(),
+            status_code=502,
+            media_type="application/json",
+        )
+
+    latency = time.monotonic() - t_start
+    llm_portal_latency_seconds.labels(endpoint=_ENDPOINT_REGISTER).observe(latency)
+    llm_portal_requests_total.labels(
+        endpoint=_ENDPOINT_REGISTER,
+        status=get_status_class(upstream_response.status_code),
+    ).inc()
+
+    return Response(
+        content=upstream_response.content,
+        status_code=upstream_response.status_code,
+        media_type=upstream_response.headers.get("content-type", "application/json"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# PATCH /portal/models/{name}/api-key  — set/update a cloud model's provider key
+# ---------------------------------------------------------------------------
+
+_ENDPOINT_API_KEY = "/portal/models/{name}/api-key"
+
+
+@router.patch(
+    "/models/{name}/api-key",
+    summary="Set or update a model's provider API key",
+    description=(
+        "Set or update the provider API key the Inference Adapter uses to "
+        "dispatch to this model (cloud backends only, e.g. Anthropic). The "
+        "raw key is never returned — the response only confirms "
+        "api_key_set=true. Returns HTTP 404 if the model doesn't exist."
+    ),
+    dependencies=[Depends(require_admin)],
+)
+async def update_model_api_key(name: str, body: ModelApiKeyPatch) -> Response:
+    endpoint = _ENDPOINT_API_KEY.format(name=name)
+    t_start = time.monotonic()
+
+    try:
+        upstream_response = await async_proxy(
+            _client,
+            "PATCH",
+            f"{settings.MODEL_REGISTRY_URL}/models/{name}/api-key",
+            json=body.model_dump(),
+            timeout=_PROXY_TIMEOUT,
+            headers={"X-Api-Key": settings.REGISTRY_API_KEY} if settings.REGISTRY_API_KEY else None,
+        )
+    except ProxyUnavailableError:
+        latency = time.monotonic() - t_start
+        llm_portal_latency_seconds.labels(endpoint=endpoint).observe(latency)
+        llm_portal_requests_total.labels(endpoint=endpoint, status="5xx").inc()
+        llm_portal_errors_total.labels(
+            endpoint=endpoint, error_code="upstream_unavailable"
+        ).inc()
+        error_body = ErrorResponse(
+            error="upstream_unavailable",
+            message="The Model Registry is unreachable or timed out.",
+            upstream="model-registry",
+        )
+        return Response(
+            content=error_body.model_dump_json(),
+            status_code=502,
+            media_type="application/json",
+        )
+
+    latency = time.monotonic() - t_start
+    llm_portal_latency_seconds.labels(endpoint=endpoint).observe(latency)
+    llm_portal_requests_total.labels(
+        endpoint=endpoint,
+        status=get_status_class(upstream_response.status_code),
+    ).inc()
+
+    if upstream_response.status_code == 404:
+        llm_portal_errors_total.labels(endpoint=endpoint, error_code="not_found").inc()
+        error_body = ErrorResponse(
+            error="not_found",
+            message=f"Model '{name}' not found.",
+        )
+        return Response(
+            content=error_body.model_dump_json(),
+            status_code=404,
+            media_type="application/json",
+        )
+
     return Response(
         content=upstream_response.content,
         status_code=upstream_response.status_code,

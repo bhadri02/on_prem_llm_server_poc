@@ -36,6 +36,7 @@ import json
 import sys
 from contextlib import asynccontextmanager
 
+import httpx
 import uvicorn
 from fastapi import FastAPI
 from prometheus_client import make_asgi_app
@@ -45,6 +46,7 @@ from inference_adapter.config import get_settings
 from inference_adapter.middleware.logging import LoggingMiddleware
 from inference_adapter.routers.health import health_router
 from inference_adapter.routers.infer import infer_router
+from inference_adapter.services.anthropic_client import AnthropicClient
 from inference_adapter.services.ollama_client import OllamaError
 
 # ---------------------------------------------------------------------------
@@ -151,6 +153,18 @@ async def lifespan(app: FastAPI):
     )
     app.state.ollama_client = ollama_client
 
+    # Cloud-backend dispatch (Anthropic, etc.) — only ever used when
+    # routing.backend != "ollama"; the Ollama path above is unaffected.
+    app.state.anthropic_client = AnthropicClient(
+        base_url=settings.anthropic_base_url,
+        api_version=settings.anthropic_api_version,
+        timeout=float(settings.anthropic_timeout_seconds),
+    )
+    # Plain httpx client for calling the Model Registry (secret resolution
+    # for cloud-backend models) — separate from ollama_client/anthropic_client,
+    # which are dedicated wrappers around their respective backend wire formats.
+    app.state.http_client = httpx.AsyncClient()
+
     # ------------------------------------------------------------------
     # 3. Attempt initial model list — degraded mode on failure
     # ------------------------------------------------------------------
@@ -226,6 +240,13 @@ async def lifespan(app: FastAPI):
         _log({"event": "ollama_client_closed"})
     except Exception as exc:  # noqa: BLE001
         _log({"event": "ollama_client_close_failed", "detail": str(exc)})
+
+    try:
+        await app.state.anthropic_client.close()
+        await app.state.http_client.aclose()
+        _log({"event": "cloud_backend_clients_closed"})
+    except Exception as exc:  # noqa: BLE001
+        _log({"event": "cloud_backend_clients_close_failed", "detail": str(exc)})
 
     # Cancel the metrics background task
     if metrics_task is not None:

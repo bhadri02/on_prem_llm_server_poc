@@ -33,6 +33,8 @@ interface ModelTableProps {
   onAction: (name: string, action: "activate" | "retire") => void;
   actionError: { name: string; message: string } | null;
   onDismissError: () => void;
+  /** Called for cloud-backed models (backend !== "ollama") to set/update the provider API key. */
+  onSetApiKey?: (name: string) => void;
 }
 
 function getCompanyLogo(backend: string) {
@@ -81,6 +83,7 @@ export default function ModelTable({
   onAction,
   actionError,
   onDismissError,
+  onSetApiKey,
 }: ModelTableProps) {
   return (
     <div className="table-container" style={{ border: "none", borderRadius: 0, boxShadow: "none" }}>
@@ -227,6 +230,18 @@ export default function ModelTable({
                               </div>
                             </button>
                           </div>
+                        )}
+
+                        {/* Cloud-backend provider API key control */}
+                        {model.backend.toLowerCase() !== "ollama" && onSetApiKey && (
+                          <button
+                            disabled={loading}
+                            onClick={() => onSetApiKey(model.name)}
+                            className="btn btn-outline"
+                            style={{ padding: "3px 8px", fontSize: 10.5 }}
+                          >
+                            🔑 {model.api_key_set ? "Update key" : "Set key"}
+                          </button>
                         )}
                       </div>
 

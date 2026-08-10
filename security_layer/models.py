@@ -45,6 +45,14 @@ class UserBlock(BaseModel):
     department: str | None = None
     roles: list[str] | None = None
     auth_method: str | None = None
+    # Populated by the API Gateway from the resolved API key profile
+    # (Phase 2 — RBAC + per-user API keys). The Security Layer doesn't act
+    # on these itself — they must simply survive this model's parse/dump
+    # round-trip so the Intelligent Router (which does enforce them) still
+    # receives them.
+    key_id: str | None = None
+    model_entitlements: list[str] = Field(default_factory=list)
+    rate_limit_override: int | None = None
 
 
 # ---------------------------------------------------------------------------

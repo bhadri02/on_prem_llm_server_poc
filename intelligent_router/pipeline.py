@@ -7,6 +7,9 @@ Stages:
   Gate:    Governance check — blocks immediately on content_safety_passed=False/missing
   Stage 1: Task classification — always overwrites inbound task_type
   Stage 2: Model selection — raises InvalidPinnedModelError (422) / NoModelForTaskError (503)
+  Stage 2b: Policy & entitlement check (Phase 2 — RBAC + per-user API keys) —
+            (role, task_type) permission matrix, then model-entitlement check
+            against the primary selected model. Both return 403 on denial.
   Stage 3: Health check — falls back to next model or exhausts chain (503)
   Stage 4: Cache lookup — returns 200 on HIT with valid content; treats missing content as MISS
   Stage 5: Inference dispatch — falls back on InferenceError, continues on success
@@ -34,6 +37,8 @@ from intelligent_router.model_selector import (
     NoModelForTaskError,
     select_model,
 )
+from intelligent_router.policy import check_task_permission
+from intelligent_router.services.policy_resolver import get_policy_matrix
 from intelligent_router.task_classifier import classify_task
 
 logger = get_logger(__name__)
@@ -120,6 +125,32 @@ def _build_fallback_audit(imf: dict, fallback: FallbackState, outcome: str, late
         "outcome": outcome,
         "model_used": failed_model,
         "fallback_level": fallback.fallback_level,
+        "latency_ms": latency_ms,
+        "timestamp_utc": _utc_now(),
+    }
+
+
+def _build_policy_denied_audit(imf: dict, latency_ms: int) -> dict:
+    """Build an audit event dict for a Stage 2b task-permission denial."""
+    return {
+        "request_id": imf.get("request_id"),
+        "layer": "router",
+        "event_type": "policy_denied",
+        "outcome": "block",
+        "model_used": imf.get("routing", {}).get("selected_model"),
+        "latency_ms": latency_ms,
+        "timestamp_utc": _utc_now(),
+    }
+
+
+def _build_entitlement_denied_audit(imf: dict, latency_ms: int) -> dict:
+    """Build an audit event dict for a Stage 2b model-entitlement denial."""
+    return {
+        "request_id": imf.get("request_id"),
+        "layer": "router",
+        "event_type": "model_not_entitled",
+        "outcome": "block",
+        "model_used": imf.get("routing", {}).get("selected_model"),
         "latency_ms": latency_ms,
         "timestamp_utc": _utc_now(),
     }
@@ -232,6 +263,55 @@ async def run_routing_pipeline(
         if "cache" not in imf or imf["cache"] is None:
             imf["cache"] = {}
 
+        # -----------------------------------------------------------------------
+        # Stage 2b: Policy & Entitlement Check (Phase 2 — RBAC + per-user API keys)
+        #
+        # Checked once against the primary selected model, not re-checked per
+        # fallback candidate — a denial here means "this identity may never
+        # make this call", independent of which backend would have served it.
+        # -----------------------------------------------------------------------
+        user_block = imf.get("user") or {}
+        roles = user_block.get("roles") if isinstance(user_block, dict) else None
+
+        # TTL-cached live fetch from admin_portal (falls back to the static
+        # YAML-loaded matrix on any failure) — this is what makes
+        # PATCH /portal/roles/{role}/permissions take effect on real
+        # enforcement without a policy_matrix.yaml edit + Router restart.
+        policy_matrix = await get_policy_matrix(state)
+
+        if not check_task_permission(roles, task_type, policy_matrix):
+            background_tasks.add_task(
+                post_audit_event,
+                _build_policy_denied_audit(imf, _ms(t0)),
+                state.settings.audit_store_url,
+                state.http_client,
+                state.settings.audit_api_key,
+            )
+            return PipelineResult(
+                success=False,
+                status_code=403,
+                imf=imf,
+                error_code="policy_denied",
+                latency_ms=_ms(t0),
+            )
+
+        model_entitlements = user_block.get("model_entitlements") if isinstance(user_block, dict) else None
+        if model_entitlements and selected_model not in model_entitlements:
+            background_tasks.add_task(
+                post_audit_event,
+                _build_entitlement_denied_audit(imf, _ms(t0)),
+                state.settings.audit_store_url,
+                state.http_client,
+                state.settings.audit_api_key,
+            )
+            return PipelineResult(
+                success=False,
+                status_code=403,
+                imf=imf,
+                error_code="model_not_entitled",
+                latency_ms=_ms(t0),
+            )
+
         # Build the fallback state from the primary selected model
         fallback = create_fallback_state(selected_model, state.model_matrix)
 
@@ -244,15 +324,34 @@ async def run_routing_pipeline(
 
             # -------------------------------------------------------------------
             # Stage 3: Health Check
+            #
+            # Cloud-backend models (backend != "ollama") skip the live network
+            # probe entirely and are assumed healthy — there's no cheap,
+            # unauthenticated reachability check for a paid external API, and
+            # probing on every routing decision would mean burning a real
+            # request against the provider just to check liveness. Real
+            # failures still surface at Stage 5 (Inference Dispatch) and
+            # trigger the normal fallback path.
+            #
+            # `routing.backend` is also stamped onto the IMF here — this is
+            # how the Inference Adapter learns which client to dispatch
+            # through (Ollama vs a cloud provider) without an extra
+            # per-request lookup against the Model Registry for the common
+            # (Ollama) case. Never carries a secret — just the backend name.
             # -------------------------------------------------------------------
             model_entry = state.model_matrix.models.get(current_model)
-            health_url = model_entry.health_url if model_entry else ""
+            backend = (model_entry.backend if model_entry else "ollama") or "ollama"
+            imf["routing"]["backend"] = backend
 
-            healthy = await check_model_health(
-                health_url,
-                state.http_client,
-                state.settings.health_check_timeout_seconds,
-            )
+            if backend == "ollama":
+                health_url = model_entry.health_url if model_entry else ""
+                healthy = await check_model_health(
+                    health_url,
+                    state.http_client,
+                    state.settings.health_check_timeout_seconds,
+                )
+            else:
+                healthy = True
 
             if not healthy:
                 metrics.fallbacks_total.labels(

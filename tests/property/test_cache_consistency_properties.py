@@ -32,6 +32,7 @@ from fastapi import BackgroundTasks
 
 from intelligent_router.task_classifier import ClassifierRules
 from intelligent_router.model_selector import ModelMatrix, ModelEntry
+from intelligent_router.policy import PolicyMatrix
 from intelligent_router.pipeline import run_routing_pipeline
 
 
@@ -139,9 +140,22 @@ def _make_pipeline_state():
     mock_settings.inference_timeout_seconds = 120
     mock_settings.health_check_timeout_seconds = 5
 
+    policy_matrix = PolicyMatrix(
+        roles={
+            "developer": {
+                "chat": True,
+                "code": True,
+                "reasoning": True,
+                "summarization": True,
+                "translation": True,
+            }
+        }
+    )
+
     return types.SimpleNamespace(
         classifier_rules=rules,
         model_matrix=matrix,
+        policy_matrix=policy_matrix,
         http_client=MagicMock(),
         settings=mock_settings,
     )

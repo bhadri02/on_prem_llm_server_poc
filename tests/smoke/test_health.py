@@ -25,6 +25,31 @@ DOWNSTREAM_URL = "http://security-layer:8081"
 
 
 # ---------------------------------------------------------------------------
+# Identity resolution stub (Phase 2 — RBAC + per-user API keys)
+#
+# AuthMiddleware now resolves X-Api-Key against the Admin Portal instead of
+# comparing to a static secret. These smoke tests aren't exercising identity
+# resolution itself, so patch it to mirror the old static-key behaviour:
+# VALID_KEY resolves to a normal developer identity, anything else is unknown.
+# ---------------------------------------------------------------------------
+
+async def _fake_resolve_key(key, client):
+    from api_gateway.services.key_resolver import KeyProfile
+
+    if key == VALID_KEY:
+        return KeyProfile(
+            user_id="poc-user",
+            username="poc-user",
+            department="poc",
+            roles=["developer"],
+            model_entitlements=[],
+            key_id="test-key-id",
+            rate_limit_override=None,
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Shared fixture: set env vars, clear caches, create app, yield TestClient
 # ---------------------------------------------------------------------------
 
@@ -44,6 +69,7 @@ def gateway_client(monkeypatch):
     from starlette.testclient import TestClient
 
     get_settings.cache_clear()
+    monkeypatch.setattr("api_gateway.middleware.auth.resolve_key", _fake_resolve_key)
 
     app = create_app()
     with TestClient(app, raise_server_exceptions=False) as client:
@@ -146,6 +172,7 @@ def test_rate_limit_61st_request_returns_429(monkeypatch):
     from starlette.testclient import TestClient
 
     get_settings.cache_clear()
+    monkeypatch.setattr("api_gateway.middleware.auth.resolve_key", _fake_resolve_key)
 
     # Clear any leftover timestamps from other tests.
     RateLimitMiddleware._store.clear()

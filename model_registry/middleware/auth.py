@@ -2,9 +2,11 @@
 Authentication middleware for the Model Registry.
 
 Implements AuthMiddleware(BaseHTTPMiddleware) that enforces X-API-Key header
-validation on mutating endpoints (POST /models, PATCH /models/{name}/status).
+validation on mutating endpoints (POST /models, PATCH /models/{name}/status,
+PATCH /models/{name}/api-key) and on the internal secret-retrieval endpoint
+(GET /models/{name}/secret).
 Uses hmac.compare_digest for constant-time comparison to prevent timing attacks.
-GET endpoints and /health are always passed through without an auth check.
+All other GET endpoints and /health are always passed through without an auth check.
 If REGISTRY_API_KEY is unset/empty, enforcement is disabled (POC convenience mode).
 """
 
@@ -23,11 +25,17 @@ def _requires_auth(method: str, path: str) -> bool:
 
     Protected routes:
     - POST /models
-    - PATCH /models/{name}/status  (any non-empty {name} segment)
+    - PATCH /models/{name}/status   (any non-empty {name} segment)
+    - PATCH /models/{name}/api-key  (any non-empty {name} segment)
+    - GET   /models/{name}/secret   (internal-only — raw provider API key)
     """
     if method == "POST" and path == "/models":
         return True
     if method == "PATCH" and re.match(r"^/models/[^/]+/status$", path):
+        return True
+    if method == "PATCH" and re.match(r"^/models/[^/]+/api-key$", path):
+        return True
+    if method == "GET" and re.match(r"^/models/[^/]+/secret$", path):
         return True
     return False
 

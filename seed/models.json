@@ -1,6 +1,6 @@
 [
   {
-    "name": "llama3.2-3b",
+    "name": "llama3.2:3b",
     "version": "1.0.0",
     "backend": "ollama",
     "endpoint": "http://localhost:11434",

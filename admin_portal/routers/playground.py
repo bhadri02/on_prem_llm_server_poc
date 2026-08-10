@@ -30,7 +30,7 @@ from __future__ import annotations
 import time
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 
 from admin_portal.config import settings
@@ -43,6 +43,7 @@ from admin_portal.metrics import (
 from admin_portal.schemas.errors import ErrorResponse
 from admin_portal.schemas.playground import ChatRequest
 from admin_portal.services.proxy import ProxyUnavailableError, async_proxy
+from admin_portal.services.session_auth import get_current_session
 
 # ---------------------------------------------------------------------------
 # Module-level HTTP client — reused across requests for connection pooling.
@@ -58,7 +59,7 @@ _PROXY_TIMEOUT = 30.0  # seconds
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
-router = APIRouter(tags=["playground"])
+router = APIRouter(tags=["playground"], dependencies=[Depends(get_current_session)])
 
 
 @router.post(

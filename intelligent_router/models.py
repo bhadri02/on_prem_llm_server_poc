@@ -38,6 +38,12 @@ class UserBlock(BaseModel):
     department: str
     roles: list[str]
     auth_method: str
+    # Populated by the API Gateway from the resolved API key profile
+    # (Phase 2 — RBAC + per-user API keys). Read by the pipeline's
+    # task-permission and model-entitlement checks.
+    key_id: Optional[str] = None
+    model_entitlements: list[str] = Field(default_factory=list)
+    rate_limit_override: Optional[int] = None
 
 
 class RequestBlock(BaseModel):

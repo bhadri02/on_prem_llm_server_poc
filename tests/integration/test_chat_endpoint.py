@@ -110,6 +110,35 @@ def clear_rate_limit_store():
     RateLimitMiddleware._store.clear()
 
 
+@pytest.fixture(autouse=True)
+def stub_key_resolver(monkeypatch):
+    """Stub identity resolution (Phase 2 — RBAC + per-user API keys).
+
+    AuthMiddleware now resolves X-Api-Key against the Admin Portal instead
+    of a static comparison. These tests exercise chat-completion mechanics,
+    not identity resolution, so TEST_API_KEY resolves to a normal developer
+    identity — mirroring the old static-key behaviour — and anything else
+    is unresolved.
+    """
+
+    async def _fake_resolve_key(key, client):
+        from api_gateway.services.key_resolver import KeyProfile
+
+        if key == TEST_API_KEY:
+            return KeyProfile(
+                user_id="poc-user",
+                username="poc-user",
+                department="poc",
+                roles=["developer"],
+                model_entitlements=[],
+                key_id="test-key-id",
+                rate_limit_override=None,
+            )
+        return None
+
+    monkeypatch.setattr("api_gateway.middleware.auth.resolve_key", _fake_resolve_key)
+
+
 @pytest.fixture
 def env_vars(monkeypatch):
     """Set the required environment variables for the API Gateway app."""

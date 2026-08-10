@@ -111,7 +111,15 @@ def app(set_env):
     from admin_portal import config as _cfg
     _cfg.settings.PROMETHEUS_URL = _PROM_BASE
 
+    from admin_portal.db.models import User
     from admin_portal.main import app as _app
+    from admin_portal.services.session_auth import AuthContext, get_current_session
+
+    _app.dependency_overrides[get_current_session] = lambda: AuthContext(
+        user=User(user_id="test-admin", username="test-admin", status="active"),
+        roles=["admin"],
+        api_key_raw="test-key",
+    )
     return _app
 
 

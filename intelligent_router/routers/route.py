@@ -38,6 +38,8 @@ _TRACKED_ERROR_CODES = frozenset(
         "all_backends_exhausted",
         "invalid_pinned_model",
         "internal_error",
+        "policy_denied",
+        "model_not_entitled",
     }
 )
 
@@ -146,5 +148,10 @@ async def post_route(
 
     elif error_code == "invalid_pinned_model":
         error_body["model"] = result.imf.get("request", {}).get("model")
+
+    elif error_code == "model_not_entitled":
+        error_body["allowed_models"] = (
+            result.imf.get("user", {}).get("model_entitlements") or []
+        )
 
     return JSONResponse(status_code=result.status_code, content=error_body)

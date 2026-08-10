@@ -26,6 +26,18 @@ class Settings(BaseSettings):
     # Optional with defaults
     # ------------------------------------------------------------------
     audit_api_key: str = ""                                        # AUDIT_API_KEY
+    # Optional (not required, unlike model_matrix_path/task_rules_path) so
+    # existing deployments/tests that predate Phase 2 (RBAC) keep working
+    # unchanged. Startup still fails fast if the file at this path is
+    # missing/malformed once the lifespan tries to load it.
+    policy_matrix_path: str = "policy_matrix.yaml"                 # POLICY_MATRIX_PATH
+    # Used to poll admin_portal for live (role, task_type) permission
+    # updates — see services/policy_resolver.py. policy_matrix.yaml above
+    # is still loaded at startup as the fail-fast baseline / offline
+    # fallback if admin_portal is ever unreachable.
+    admin_portal_url: str = "http://admin-portal:8084"             # ADMIN_PORTAL_URL
+    admin_portal_internal_key: str = ""                             # ADMIN_PORTAL_INTERNAL_KEY
+    policy_cache_ttl_seconds: int = 15                              # POLICY_CACHE_TTL_SECONDS
     cache_url: str = "http://cache:8086"                          # CACHE_URL
     inference_adapter_url: str = "http://inference-adapter:8087"  # INFERENCE_ADAPTER_URL
     log_level: str = "INFO"                                        # LOG_LEVEL

@@ -69,11 +69,19 @@ class IMFRouting(BaseModel):
 
     selected_model is optional here so that the Inference Adapter can detect
     and reject requests where it is absent (Requirement 1.7).
+
+    backend is stamped by the Router from model_matrix.yaml's ModelEntry.backend
+    (see intelligent_router/pipeline.py Stage 3) — it tells the Inference
+    Adapter which client to dispatch through ("ollama" vs a cloud provider
+    like "anthropic") without a per-request Model Registry lookup for the
+    common (Ollama) case. Absent/None is treated as "ollama" for backward
+    compatibility with callers that don't set it.
     """
 
     selected_model: str | None = None
     routing_mode: str | None = None
     fallback_level: int = 0
+    backend: str | None = None
 
 
 class IMFUser(BaseModel):

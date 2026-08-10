@@ -29,10 +29,16 @@ env:
   REDIS_URL: "redis://redis-master:6379"
   SIMILARITY_THRESHOLD: "0.90"
   EMBEDDING_MODEL: "all-MiniLM-L6-v2"
+  # This platform must run air-gapped — without these, SentenceTransformer()
+  # phones home to the HF Hub on every pod start to check for updates, even
+  # when the model is already baked into the image. The embedding model must
+  # be pre-fetched into the image (or a mounted cache) at build time.
+  HF_HUB_OFFLINE: "1"
+  TRANSFORMERS_OFFLINE: "1"
   MAX_SEMANTIC_ENTRIES: "500"
-  TTL_CHAT: "3600"
-  TTL_CODE: "7200"
-  TTL_SUMMARIZATION: "86400"
+  # Uniform TTL (seconds) across every task_type, for both the exact-match
+  # and semantic caches — a cache hit only within this window, then a miss.
+  CACHE_TTL_SECONDS: "60"
 
 # Redis sub-chart (single instance — POC scope)
 redis:

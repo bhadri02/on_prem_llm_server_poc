@@ -34,6 +34,7 @@ from pytest_httpx import HTTPXMock
 from intelligent_router.main import create_app
 from intelligent_router.metrics_app import metrics_app
 from intelligent_router.model_selector import ModelEntry, ModelMatrix
+from intelligent_router.policy import PolicyMatrix
 from intelligent_router.task_classifier import ClassifierRules
 import intelligent_router.metrics as ir_metrics
 
@@ -175,6 +176,17 @@ def _build_route_app(http_client: httpx.AsyncClient):
             "summarization": PRIMARY_MODEL_NAME,
             "translation": PRIMARY_MODEL_NAME,
         },
+    )
+    app.state.policy_matrix = PolicyMatrix(
+        roles={
+            "developer": {
+                "chat": True,
+                "code": True,
+                "reasoning": True,
+                "summarization": True,
+                "translation": True,
+            }
+        }
     )
     app.state.http_client = http_client
     return app

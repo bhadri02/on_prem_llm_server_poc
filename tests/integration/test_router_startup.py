@@ -42,11 +42,14 @@ from intelligent_router.main import create_app
 # ---------------------------------------------------------------------------
 
 
-def _valid_mock_settings(matrix_path: str, rules_path: str) -> MagicMock:
+def _valid_mock_settings(
+    matrix_path: str, rules_path: str, policy_path: str = "policy_matrix.yaml"
+) -> MagicMock:
     """Return a fully-valid mock Settings for startup."""
     s = MagicMock()
     s.model_matrix_path = matrix_path
     s.task_rules_path = rules_path
+    s.policy_matrix_path = policy_path
     s.audit_store_url = "http://audit-store:9200"
     s.cache_url = "http://cache:8086"
     s.inference_adapter_url = "http://inference-adapter:8087"
@@ -219,10 +222,12 @@ async def test_valid_config_sets_app_state(tmp_path):
     """
     rules_file = tmp_path / "rules.yaml"
     matrix_file = tmp_path / "matrix.yaml"
+    policy_file = tmp_path / "policy.yaml"
     shutil.copy("task_classifier_rules.yaml", rules_file)
     shutil.copy("model_matrix.yaml", matrix_file)
+    shutil.copy("policy_matrix.yaml", policy_file)
 
-    mock_settings = _valid_mock_settings(str(matrix_file), str(rules_file))
+    mock_settings = _valid_mock_settings(str(matrix_file), str(rules_file), str(policy_file))
 
     app = create_app()
     with patch.object(main_mod, "settings", mock_settings):

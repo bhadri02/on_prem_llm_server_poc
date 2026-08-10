@@ -38,9 +38,36 @@ class Settings(BaseSettings):
     AUDIT_STORE_URL: str = "http://audit-store:9200"
     MODEL_REGISTRY_URL: str = "http://model-registry:5000"
     REGISTRY_API_KEY: str = ""
+    # Used by the admin-only Ollama pull/sync endpoint (routers/ollama_admin.py)
+    # to talk to Ollama directly — distinct from OLLAMA_BASE_URL in
+    # inference_adapter/config.py, which is a separate service's own setting.
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_PULL_TIMEOUT_SECONDS: int = 900
+
+    # Login sessions (Phase 6 — real password login for both users and admins)
+    SESSION_TTL_HOURS: int = 8
+    SESSION_COOKIE_NAME: str = "portal_session"
+    # POC default password for the seeded admin user — only set if the row's
+    # password_hash is still null (never overwrites a real admin-chosen one).
+    SEED_ADMIN_PASSWORD: str = "admin123"
     PROMETHEUS_URL: str = "http://prometheus:9090"
     GRAFANA_URL: str = "http://grafana:3000"
     LOG_LEVEL: str = "INFO"
+
+    # ------------------------------------------------------------------
+    # Users / roles / API keys DB (Phase 1 — Persistent DB + RBAC)
+    # ------------------------------------------------------------------
+    DATABASE_URL: str = "postgresql://llm_user:llm_pass@localhost:5432/llm_platform"
+    # Service-to-service secret — protects GET /portal/keys/resolve from
+    # anything other than the API Gateway. Never exposed to the browser.
+    ADMIN_PORTAL_INTERNAL_KEY: str = "poc-portal-internal-key"
+    # Postgres connect timeout (seconds) — deliberately generous by default,
+    # since a real DATABASE_URL may point at a remote host (e.g. a managed
+    # Postgres instance on another continent) where a cross-region TCP +
+    # TLS handshake can genuinely take a couple of seconds. Lower this in a
+    # test environment (where "unreachable" should fail fast) via the env
+    # var, not by changing the code default.
+    DATABASE_CONNECT_TIMEOUT_SECONDS: int = 5
 
     # ------------------------------------------------------------------
     # pydantic-settings config

@@ -43,6 +43,7 @@ from intelligent_router.main import create_app
 _REPO_ROOT = Path(__file__).parent.parent.parent
 REAL_RULES_YAML = _REPO_ROOT / "task_classifier_rules.yaml"
 REAL_MATRIX_YAML = _REPO_ROOT / "model_matrix.yaml"
+REAL_POLICY_YAML = _REPO_ROOT / "policy_matrix.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -50,11 +51,14 @@ REAL_MATRIX_YAML = _REPO_ROOT / "model_matrix.yaml"
 # ---------------------------------------------------------------------------
 
 
-def _valid_settings(rules_path: str, matrix_path: str) -> MagicMock:
+def _valid_settings(
+    rules_path: str, matrix_path: str, policy_path: str = str(REAL_POLICY_YAML)
+) -> MagicMock:
     """Return a MagicMock that passes all lifespan validation checks."""
     s = MagicMock()
     s.model_matrix_path = matrix_path
     s.task_rules_path = rules_path
+    s.policy_matrix_path = policy_path
     s.audit_store_url = "http://audit-store:9200"
     s.cache_url = "http://cache:8086"
     s.inference_adapter_url = "http://inference-adapter:8087"
@@ -192,10 +196,12 @@ async def test_valid_config_sets_app_state(tmp_path):
     """
     rules_file = tmp_path / "task_classifier_rules.yaml"
     matrix_file = tmp_path / "model_matrix.yaml"
+    policy_file = tmp_path / "policy_matrix.yaml"
     shutil.copy(REAL_RULES_YAML, rules_file)
     shutil.copy(REAL_MATRIX_YAML, matrix_file)
+    shutil.copy(REAL_POLICY_YAML, policy_file)
 
-    mock_settings = _valid_settings(str(rules_file), str(matrix_file))
+    mock_settings = _valid_settings(str(rules_file), str(matrix_file), str(policy_file))
 
     app = create_app()
     with patch.object(main_mod, "settings", mock_settings):

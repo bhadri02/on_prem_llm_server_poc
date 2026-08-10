@@ -33,6 +33,7 @@ settings.load_profile("ci")
 # ---------------------------------------------------------------------------
 from intelligent_router.task_classifier import ClassifierRules
 from intelligent_router.model_selector import ModelMatrix, ModelEntry
+from intelligent_router.policy import PolicyMatrix
 from intelligent_router.main import create_app
 
 
@@ -97,6 +98,17 @@ def _make_router_app_and_state():
     app.router.lifespan_context = None
     app.state.classifier_rules = rules
     app.state.model_matrix = matrix
+    app.state.policy_matrix = PolicyMatrix(
+        roles={
+            "developer": {
+                "chat": True,
+                "code": True,
+                "reasoning": True,
+                "summarization": True,
+                "translation": True,
+            }
+        }
+    )
     app.state.http_client = MagicMock()
     app.state.settings = mock_settings
     return app

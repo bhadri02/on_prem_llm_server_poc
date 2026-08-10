@@ -44,6 +44,22 @@ export interface ModelRecord {
   size?: string;
   contextWindow?: string;
   license?: string;
+  endpoint?: string;
+  api_key_set?: boolean;
+  notes?: string | null;
+  /** Present only on GET /portal/chat/models — true if the caller's key(s) are entitled to this model. */
+  entitled?: boolean;
+}
+
+/** Body for POST /portal/models (admin_portal/schemas/models.py::ModelRegisterRequest) */
+export interface ModelRegisterReq {
+  name: string;
+  version: string;
+  backend: string;
+  endpoint: string;
+  tasks: string[];
+  status?: "active" | "retired" | "staging";
+  api_key?: string | null;
 }
 
 export interface MetricsSummary {
@@ -56,11 +72,67 @@ export interface PortalConfig {
   grafana_url: string;
 }
 
+/** Mirrors admin_portal/schemas/users.py::UserOut */
+export interface User {
+  user_id: string;
+  username: string;
+  email: string | null;
+  department: string | null;
+  status: "active" | "inactive";
+  roles: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+/** Mirrors admin_portal/schemas/roles.py::RoleOut */
+export interface Role {
+  role_name: string;
+  description: string | null;
+}
+
+/** Mirrors admin_portal/schemas/roles.py::RolePermissionsOut */
+export interface RolePermissions {
+  role_name: string;
+  permissions: Record<string, boolean>;
+}
+
+/** Mirrors admin_portal/schemas/keys.py::ApiKeyOut */
+export interface ApiKey {
+  key_id: string;
+  key_prefix: string;
+  label: string | null;
+  status: "active" | "revoked" | "expired";
+  expires_at: string | null;
+  rate_limit_rpm: number | null;
+  created_at: string;
+  last_used_at: string | null;
+  model_entitlements: string[];
+}
+
+/** Mirrors admin_portal/schemas/keys.py::ApiKeyCreated */
+export interface ApiKeyCreated extends ApiKey {
+  raw_key: string;
+}
+
+/** Mirrors admin_portal/schemas/keys.py::ApiKeyWithOwner — GET /portal/keys/ (admin-wide) */
+export interface ApiKeyWithOwner extends ApiKey {
+  user_id: string;
+  owner_username: string;
+}
+
 export interface ErrorResponse {
   error: string;
   message: string;
   upstream?: string;
   allowed_values?: string[];
+}
+
+/** Mirrors admin_portal/schemas/auth.py::MeResponse — GET /portal/auth/me, POST /portal/auth/login */
+export interface Identity {
+  user_id: string;
+  username: string;
+  department: string | null;
+  roles: string[];
 }
 
 /** Thrown by portalClient when the server returns a non-2xx response. */

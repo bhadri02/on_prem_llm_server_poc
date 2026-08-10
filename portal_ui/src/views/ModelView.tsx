@@ -19,7 +19,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ModelRecord } from "../types";
 import { ApiError } from "../types";
-import { getModels, patchModelStatus } from "../api/portalClient";
+import { getModels, patchModelApiKey, patchModelStatus, registerModel } from "../api/portalClient";
 import ModelTable from "../components/models/ModelTable";
 import ErrorBanner from "../components/ErrorBanner";
 import LoadingSpinner from "../components/LoadingSpinner";
@@ -58,6 +58,73 @@ export default function ModelView() {
   const [requestDropdownOpen, setRequestDropdownOpen] = useState(false);
   const requestDropdownRef = useRef<HTMLDivElement>(null);
 
+  // Register-model modal state (Phase 5 — real backend registration)
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [regName, setRegName] = useState("");
+  const [regVersion, setRegVersion] = useState("1.0");
+  const [regBackend, setRegBackend] = useState("ollama");
+  const [regEndpoint, setRegEndpoint] = useState("");
+  const [regTasks, setRegTasks] = useState<string[]>(["chat"]);
+  const [regApiKey, setRegApiKey] = useState("");
+  const [registering, setRegistering] = useState(false);
+  const [registerError, setRegisterError] = useState<string | null>(null);
+  const [apiKeyActionError, setApiKeyActionError] = useState<string | null>(null);
+
+  const ALL_TASKS = ["chat", "code", "reasoning", "summarization", "translation"];
+
+  function toggleRegTask(task: string) {
+    setRegTasks((prev) => (prev.includes(task) ? prev.filter((t) => t !== task) : [...prev, task]));
+  }
+
+  async function handleRegisterSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!regName.trim() || !regEndpoint.trim() || regTasks.length === 0) return;
+    if (regBackend !== "ollama" && !regApiKey.trim()) {
+      setRegisterError("A provider API key is required for non-Ollama backends.");
+      return;
+    }
+    setRegistering(true);
+    setRegisterError(null);
+    try {
+      await registerModel({
+        name: regName.trim(),
+        version: regVersion.trim() || "1.0",
+        backend: regBackend,
+        endpoint: regEndpoint.trim(),
+        tasks: regTasks,
+        status: "staging",
+        api_key: regBackend !== "ollama" ? regApiKey.trim() : undefined,
+      });
+      setShowRegisterModal(false);
+      setRegName(""); setRegVersion("1.0"); setRegBackend("ollama");
+      setRegEndpoint(""); setRegTasks(["chat"]); setRegApiKey("");
+      setToastMessage(
+        `${regName.trim()} registered in staging. Note: it will not actually be routable until model_matrix.yaml is updated and the Router is restarted — see docs/FRONTEND_INTEGRATION.md.`,
+      );
+      setTimeout(() => setToastMessage(null), 6000);
+      fetchModels({ silent: true });
+    } catch (err) {
+      setRegisterError(err instanceof ApiError ? `${err.status}: ${err.message}` : String(err));
+    } finally {
+      setRegistering(false);
+    }
+  }
+
+  function handleSetApiKey(name: string) {
+    const key = window.prompt(`Provider API key for ${name} (stored server-side, never shown again):`);
+    if (!key || !key.trim()) return;
+    setApiKeyActionError(null);
+    patchModelApiKey(name, key.trim())
+      .then(() => {
+        setToastMessage(`API key saved for ${name}.`);
+        setTimeout(() => setToastMessage(null), 3000);
+        fetchModels({ silent: true });
+      })
+      .catch((err: unknown) => {
+        setApiKeyActionError(err instanceof ApiError ? `${err.status}: ${err.message}` : String(err));
+      });
+  }
+
   // Close request dropdown on outside click
   useEffect(() => {
     function handleOutside(e: MouseEvent) {
@@ -84,7 +151,11 @@ export default function ModelView() {
     return true;
   };
 
-  const models = [...apiModels, ...dummyModels].filter(isOpenSource);
+  // Real registered models (apiModels) are always shown regardless of backend —
+  // including cloud/Anthropic ones registered via the modal below. The
+  // open-source filter only applies to the simulated "request access" catalog
+  // (dummyModels), which predates real cloud-model registration.
+  const models = [...apiModels, ...dummyModels.filter(isOpenSource)];
 
   // ---------------------------------------------------------------------------
   // Fetch helpers
@@ -258,14 +329,27 @@ export default function ModelView() {
             List of registered and active models. Turn the status toggle ON/OFF to activate or retire.
           </p>
         </div>
-        <button
-          onClick={() => setShowRequestModal(true)}
-          className="btn"
-          style={{ padding: "10px 20px", fontSize: 14, fontWeight: 600 }}
-        >
-          Request Model Access
-        </button>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            onClick={() => setShowRegisterModal(true)}
+            className="btn btn-primary"
+            style={{ padding: "10px 20px", fontSize: 14, fontWeight: 600 }}
+          >
+            Register Model
+          </button>
+          <button
+            onClick={() => setShowRequestModal(true)}
+            className="btn"
+            style={{ padding: "10px 20px", fontSize: 14, fontWeight: 600 }}
+          >
+            Request Model Access
+          </button>
+        </div>
       </div>
+
+      {apiKeyActionError && (
+        <ErrorBanner statusCode={0} message={apiKeyActionError} onDismiss={() => setApiKeyActionError(null)} />
+      )}
 
       {/* Top-level fetch error */}
       {fetchError && (
@@ -312,7 +396,127 @@ export default function ModelView() {
             onAction={handleAction}
             actionError={actionError}
             onDismissError={() => setActionError(null)}
+            onSetApiKey={handleSetApiKey}
           />
+        </div>
+      )}
+
+      {/* Register model modal (Phase 5 — real backend registration) */}
+      {showRegisterModal && (
+        <div
+          style={{
+            position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.4)", display: "flex",
+            justifyContent: "center", alignItems: "center", zIndex: 1000,
+          }}
+          onClick={() => setShowRegisterModal(false)}
+        >
+          <div
+            className="card"
+            style={{
+              width: "100%", maxWidth: 480, padding: 24, backgroundColor: "#ffffff",
+              boxShadow: "0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)",
+              display: "flex", flexDirection: "column", gap: 16, maxHeight: "90vh", overflowY: "auto",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h2 style={{ margin: 0 }}>Register Model</h2>
+              <button
+                onClick={() => setShowRegisterModal(false)}
+                style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--text-light)" }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleRegisterSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {registerError && <div style={{ fontSize: 12.5, color: "#ef4444" }}>{registerError}</div>}
+
+              <div className="form-group">
+                <label className="form-label">Model name</label>
+                <input
+                  type="text" placeholder="e.g. claude-sonnet-5" value={regName}
+                  onChange={(e) => setRegName(e.target.value)} className="form-input"
+                  style={{ width: "100%", padding: "10px 12px" }} required
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Version</label>
+                  <input
+                    type="text" value={regVersion} onChange={(e) => setRegVersion(e.target.value)}
+                    className="form-input" style={{ width: "100%", padding: "10px 12px" }}
+                  />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Backend</label>
+                  <select
+                    value={regBackend} onChange={(e) => setRegBackend(e.target.value)}
+                    className="form-select" style={{ width: "100%", padding: "10px 12px" }}
+                  >
+                    <option value="ollama">ollama (on-prem)</option>
+                    <option value="anthropic">anthropic (cloud)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Endpoint</label>
+                <input
+                  type="text"
+                  placeholder={regBackend === "ollama" ? "http://localhost:11434" : "https://api.anthropic.com"}
+                  value={regEndpoint} onChange={(e) => setRegEndpoint(e.target.value)}
+                  className="form-input" style={{ width: "100%", padding: "10px 12px" }} required
+                />
+              </div>
+
+              {regBackend !== "ollama" && (
+                <div className="form-group">
+                  <label className="form-label">Provider API key</label>
+                  <input
+                    type="password" placeholder="sk-ant-api03-…" value={regApiKey}
+                    onChange={(e) => setRegApiKey(e.target.value)} className="form-input"
+                    style={{ width: "100%", padding: "10px 12px" }}
+                  />
+                  <p style={{ fontSize: 11.5, color: "var(--text-light)", margin: "6px 0 0" }}>
+                    Stored server-side, never shown again.
+                  </p>
+                </div>
+              )}
+
+              <div className="form-group">
+                <label className="form-label">Supported tasks</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {ALL_TASKS.map((t) => (
+                    <label key={t} style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 5 }}>
+                      <input type="checkbox" checked={regTasks.includes(t)} onChange={() => toggleRegTask(t)} />
+                      {t}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <p style={{ fontSize: 11.5, color: "var(--text-light)", margin: 0 }}>
+                Note: registering here does not make the model routable by itself —
+                <code style={{ fontFamily: "var(--font-mono)" }}> model_matrix.yaml</code> must also be
+                updated and the Router restarted. See docs/FRONTEND_INTEGRATION.md.
+              </p>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 4 }}>
+                <button
+                  type="button" onClick={() => setShowRegisterModal(false)}
+                  className="btn btn-secondary" style={{ padding: "10px 16px" }}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn" disabled={registering} style={{ padding: "10px 20px" }}>
+                  {registering ? "Registering…" : "Register model"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

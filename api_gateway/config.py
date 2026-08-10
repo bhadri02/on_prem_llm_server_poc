@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     # env: DOWNSTREAM_TIMEOUT — default 10.0 seconds
     downstream_timeout_seconds: float = 10.0
 
+    # ── Identity resolution (Phase 2 — RBAC + per-user API keys) ────────────
+    # env: ADMIN_PORTAL_URL — base URL of the Admin Portal API
+    admin_portal_url: str = "http://admin-portal:8084"
+    # env: ADMIN_PORTAL_INTERNAL_KEY — shared secret for /portal/keys/resolve
+    admin_portal_internal_key: str = "poc-portal-internal-key"
+    # env: KEY_CACHE_TTL_SECONDS — in-process resolved-key cache TTL
+    key_cache_ttl_seconds: float = 30.0
+
     # ── Distributed tracing (opt-in, disabled by default for POC) ──────────
     # env: TRACING_ENABLED — set to "true" to enable OTel/Jaeger tracing
     tracing_enabled: bool = False

@@ -221,6 +221,20 @@ def test_routing_block_has_schema_defaults():
     assert r.fallback_level == 0
 
 
+def test_routing_mode_is_pinned_when_client_specifies_a_model():
+    """A client-specified model means "pinned" routing — without this,
+    intelligent_router's select_model() always takes the auto branch and
+    silently ignores request.model unless it happens to match the task's
+    auto-default (a real bug found via a live end-to-end test)."""
+    imf = build_imf(_req(model="qwen2.5:3b"))
+    assert imf.routing.routing_mode == "pinned"
+
+
+def test_routing_mode_is_auto_when_client_omits_model():
+    imf = build_imf(_req())
+    assert imf.routing.routing_mode == "auto"
+
+
 def test_cache_block_has_schema_defaults():
     imf = build_imf(_req())
     c = imf.cache

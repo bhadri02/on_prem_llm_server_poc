@@ -55,6 +55,7 @@ def _make_router_test_state():
     import types
     from intelligent_router.task_classifier import ClassifierRules
     from intelligent_router.model_selector import ModelMatrix, ModelEntry
+    from intelligent_router.policy import PolicyMatrix
 
     # Build a minimal ClassifierRules with representative keywords
     rules = ClassifierRules(
@@ -96,9 +97,26 @@ def _make_router_test_state():
 
     mock_http_client = MagicMock()
 
+    # Phase 2 — RBAC: permits the roles these tests actually send
+    # ("developer", "admin") for every task_type in the test model matrix.
+    _all_tasks_allowed = {
+        "chat": True,
+        "code": True,
+        "reasoning": True,
+        "summarization": True,
+        "translation": True,
+    }
+    policy_matrix = PolicyMatrix(
+        roles={
+            "developer": dict(_all_tasks_allowed),
+            "admin": dict(_all_tasks_allowed),
+        }
+    )
+
     state = types.SimpleNamespace(
         classifier_rules=rules,
         model_matrix=matrix,
+        policy_matrix=policy_matrix,
         http_client=mock_http_client,
         settings=mock_settings,
     )
@@ -362,3 +380,15 @@ def reset_router_prometheus_registry():
             metric._metrics.clear()
         except AttributeError:
             pass
+
+
+@pytest.fixture(autouse=True, scope="function")
+def reset_policy_matrix_cache():
+    """Clear intelligent_router's TTL-cached policy matrix between tests —
+    otherwise one test's fetch (or fallback) result leaks into the next via
+    the module-level cache in services/policy_resolver.py."""
+    from intelligent_router.services.policy_resolver import reset_cache
+
+    reset_cache()
+    yield
+    reset_cache()

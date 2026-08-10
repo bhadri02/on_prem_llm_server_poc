@@ -38,14 +38,14 @@ spec:
               value: {{ .Values.env.SIMILARITY_THRESHOLD | quote }}
             - name: EMBEDDING_MODEL
               value: {{ .Values.env.EMBEDDING_MODEL | quote }}
+            - name: HF_HUB_OFFLINE
+              value: {{ .Values.env.HF_HUB_OFFLINE | quote }}
+            - name: TRANSFORMERS_OFFLINE
+              value: {{ .Values.env.TRANSFORMERS_OFFLINE | quote }}
             - name: MAX_SEMANTIC_ENTRIES
               value: {{ .Values.env.MAX_SEMANTIC_ENTRIES | quote }}
-            - name: TTL_CHAT
-              value: {{ .Values.env.TTL_CHAT | quote }}
-            - name: TTL_CODE
-              value: {{ .Values.env.TTL_CODE | quote }}
-            - name: TTL_SUMMARIZATION
-              value: {{ .Values.env.TTL_SUMMARIZATION | quote }}
+            - name: CACHE_TTL_SECONDS
+              value: {{ .Values.env.CACHE_TTL_SECONDS | quote }}
             - name: PORT
               value: "8086"
           livenessProbe:

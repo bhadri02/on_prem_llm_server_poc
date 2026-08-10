@@ -2,10 +2,11 @@
 Infer router for the Inference Adapter.
 
 Exposes POST /infer — validates the incoming IMF document, dispatches to
-Ollama via OllamaClient, maps the response back to IMF, and updates
-Prometheus metrics before returning.
+Ollama or a cloud provider (based on routing.backend, stamped by the
+Router — see intelligent_router/pipeline.py Stage 3), maps the response
+back to IMF, and updates Prometheus metrics before returning.
 
-Error mapping:
+Error mapping (Ollama path — routing.backend == "ollama" or absent):
   missing routing.selected_model          → 422  (pydantic / custom)
   missing / empty request.messages        → 422  event=empty_messages
   selected_model not in loaded model list → 422  event=model_not_loaded
@@ -14,6 +15,16 @@ Error mapping:
   Ollama HTTP 5xx                         → 502  event=ollama_backend_error
   Ollama response not valid JSON          → 502  event=ollama_invalid_response
   Ollama response missing message/content → 502  event=ollama_invalid_response
+
+Error mapping (cloud path — routing.backend == "anthropic"):
+  Model Registry unreachable              → 503  event=model_registry_unreachable
+  no api_key on file for this model       → 422  event=provider_api_key_not_configured
+  provider timeout / connection error     → 503  event=anthropic_unreachable
+  provider HTTP 4xx                       → 422  event=anthropic_request_rejected
+  provider HTTP 5xx                       → 502  event=anthropic_backend_error
+  provider response unparseable           → 502  event=anthropic_invalid_response
+  unrecognised routing.backend value      → 422  event=unsupported_backend
+
   Unhandled Python exception              → 500  event=internal_error
 
 Validates: Requirements 1.1, 1.6, 1.7, 1.8, 1.9, 1.10,
@@ -37,6 +48,18 @@ from inference_adapter.config import get_settings
 from inference_adapter.metrics import LAYER_METRICS
 from inference_adapter.schemas.imf import IMFDocument
 from inference_adapter.services.imf_mapper import IMFMapper
+from inference_adapter.services.anthropic_client import (
+    AnthropicBackendError,
+    AnthropicClient,
+    AnthropicConnectionError,
+    AnthropicInvalidResponseError,
+    AnthropicRequestError,
+    AnthropicTimeoutError,
+)
+from inference_adapter.services.model_secret_resolver import (
+    ModelSecretUnavailable,
+    resolve_api_key,
+)
 from inference_adapter.services.ollama_client import (
     OllamaBackendError,
     OllamaConnectionError,
@@ -65,6 +88,160 @@ def _log(entry: dict) -> None:
 def _utc_now_iso() -> str:
     """Return current UTC time in ISO-8601 format with a trailing 'Z'."""
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+# ---------------------------------------------------------------------------
+# Cloud-backend dispatch (routing.backend != "ollama")
+# ---------------------------------------------------------------------------
+
+
+async def _dispatch_cloud_backend(
+    imf: IMFDocument,
+    request: Request,
+    request_id: str | None,
+    backend: str,
+    model_label: str,
+    department_label: str,
+) -> JSONResponse:
+    """Handle POST /infer for a model whose routing.backend != "ollama".
+
+    Currently the only recognised cloud backend is "anthropic"; anything
+    else returns 422 unsupported_backend. Mirrors the Ollama dispatch
+    block's structure (log → dispatch → map errors → success), using
+    parallel `anthropic_*` event names so the two paths never share an
+    ambiguous error code.
+    """
+    settings = get_settings()
+
+    if backend != "anthropic":
+        LAYER_METRICS.record_request(
+            status="error", department=department_label, model=model_label, latency_s=0.0
+        )
+        return JSONResponse(
+            status_code=422,
+            content={
+                "event": "unsupported_backend",
+                "backend": backend,
+                "request_id": request_id,
+            },
+        )
+
+    # ---- Resolve the provider API key from the Model Registry ------------
+    try:
+        api_key = await resolve_api_key(model_label, settings, request.app.state.http_client)
+    except ModelSecretUnavailable as exc:
+        _log({"event": "model_registry_unreachable", "request_id": request_id, "detail": str(exc)})
+        LAYER_METRICS.record_error(error_code="model_registry_unreachable", department=department_label)
+        LAYER_METRICS.record_request(
+            status="error", department=department_label, model=model_label, latency_s=0.0
+        )
+        return JSONResponse(
+            status_code=503,
+            content={"event": "model_registry_unreachable", "request_id": request_id},
+        )
+
+    if not api_key:
+        LAYER_METRICS.record_error(error_code="provider_api_key_not_configured", department=department_label)
+        LAYER_METRICS.record_request(
+            status="error", department=department_label, model=model_label, latency_s=0.0
+        )
+        return JSONResponse(
+            status_code=422,
+            content={
+                "event": "provider_api_key_not_configured",
+                "model": model_label,
+                "request_id": request_id,
+            },
+        )
+
+    _log(
+        {
+            "event": "inference_start",
+            "request_id": request_id,
+            "model": model_label,
+            "backend": backend,
+            "timestamp_utc": _utc_now_iso(),
+        }
+    )
+
+    anthropic_client = request.app.state.anthropic_client
+    start_ns = time.monotonic_ns()
+
+    try:
+        anthropic_payload = IMFMapper.to_anthropic_request(imf, settings)
+        anthropic_resp = await anthropic_client.messages(anthropic_payload, api_key)
+        imf_out = IMFMapper.to_imf_response_from_anthropic(
+            imf,
+            anthropic_resp,
+            wall_clock_ms=(time.monotonic_ns() - start_ns) // 1_000_000,
+        )
+
+    except (AnthropicTimeoutError, AnthropicConnectionError):
+        latency_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+        _log({"event": "inference_error", "request_id": request_id, "model": model_label,
+              "error_code": "anthropic_unreachable", "latency_ms": latency_ms})
+        LAYER_METRICS.record_error(error_code="anthropic_unreachable", department=department_label)
+        LAYER_METRICS.record_request(
+            status="error", department=department_label, model=model_label, latency_s=latency_ms / 1000.0
+        )
+        return JSONResponse(status_code=503, content={"event": "anthropic_unreachable", "request_id": request_id})
+
+    except AnthropicRequestError:
+        latency_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+        _log({"event": "inference_error", "request_id": request_id, "model": model_label,
+              "error_code": "anthropic_request_rejected", "latency_ms": latency_ms})
+        LAYER_METRICS.record_error(error_code="anthropic_error_response", department=department_label)
+        LAYER_METRICS.record_request(
+            status="error", department=department_label, model=model_label, latency_s=latency_ms / 1000.0
+        )
+        return JSONResponse(status_code=422, content={"event": "anthropic_request_rejected", "request_id": request_id})
+
+    except AnthropicBackendError:
+        latency_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+        _log({"event": "inference_error", "request_id": request_id, "model": model_label,
+              "error_code": "anthropic_backend_error", "latency_ms": latency_ms})
+        LAYER_METRICS.record_error(error_code="anthropic_error_response", department=department_label)
+        LAYER_METRICS.record_request(
+            status="error", department=department_label, model=model_label, latency_s=latency_ms / 1000.0
+        )
+        return JSONResponse(status_code=502, content={"event": "anthropic_backend_error", "request_id": request_id})
+
+    except AnthropicInvalidResponseError:
+        latency_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+        _log({"event": "inference_error", "request_id": request_id, "model": model_label,
+              "error_code": "anthropic_invalid_response", "latency_ms": latency_ms})
+        LAYER_METRICS.record_error(error_code="anthropic_unparseable_body", department=department_label)
+        LAYER_METRICS.record_request(
+            status="error", department=department_label, model=model_label, latency_s=latency_ms / 1000.0
+        )
+        return JSONResponse(status_code=502, content={"event": "anthropic_invalid_response", "request_id": request_id})
+
+    except Exception:
+        latency_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+        LAYER_METRICS.record_request(
+            status="error", department=department_label, model=model_label, latency_s=latency_ms / 1000.0
+        )
+        return JSONResponse(status_code=500, content={"event": "internal_error", "request_id": request_id})
+
+    # ---- Success -----------------------------------------------------
+    latency_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+    usage = imf_out.response.usage if imf_out.response else None
+    _log(
+        {
+            "event": "inference_complete",
+            "request_id": request_id,
+            "model": model_label,
+            "backend": backend,
+            "prompt_tokens": usage.prompt_tokens if usage else 0,
+            "completion_tokens": usage.completion_tokens if usage else 0,
+            "total_tokens": usage.total_tokens if usage else 0,
+            "latency_ms": latency_ms,
+        }
+    )
+    LAYER_METRICS.record_request(
+        status="success", department=department_label, model=model_label, latency_s=latency_ms / 1000.0
+    )
+    return JSONResponse(status_code=200, content=imf_out.model_dump())
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +306,20 @@ async def infer(imf: IMFDocument, request: Request) -> JSONResponse:
                 "event": "empty_messages",
                 "request_id": request_id,
             },
+        )
+
+    # ------------------------------------------------------------------
+    # Backend branch — routing.backend is stamped by the Router
+    # (intelligent_router/pipeline.py Stage 3). Absent/None means "ollama"
+    # for backward compatibility with callers that don't set it (including
+    # every pre-existing test fixture). Cloud backends skip the
+    # ollama_models membership check entirely — that list only makes sense
+    # for models actually loaded into this adapter's local Ollama instance.
+    # ------------------------------------------------------------------
+    backend = (imf.routing.backend or "ollama").lower()
+    if backend != "ollama":
+        return await _dispatch_cloud_backend(
+            imf, request, request_id, backend, model_label, department_label
         )
 
     # ------------------------------------------------------------------

@@ -29,6 +29,7 @@ from prometheus_client import make_asgi_app
 from intelligent_router.config import settings
 from intelligent_router.logging_config import get_logger
 from intelligent_router.model_selector import load_model_matrix
+from intelligent_router.policy import load_policy_matrix
 from intelligent_router.routers.health import health_router
 from intelligent_router.routers.openai_compat import openai_router
 from intelligent_router.routers.route import route_router
@@ -123,6 +124,14 @@ async def lifespan(app: FastAPI):
         sys.exit(1)
 
     # ------------------------------------------------------------------
+    # Step 4b: Load policy matrix (Phase 2 — RBAC role/task_type enforcement)
+    # ------------------------------------------------------------------
+    policy_matrix = load_policy_matrix(settings.policy_matrix_path)
+    if policy_matrix is None:
+        # load_policy_matrix already logged the specific failure
+        sys.exit(1)
+
+    # ------------------------------------------------------------------
     # Step 5: Create shared httpx client
     # ------------------------------------------------------------------
     http_client = httpx.AsyncClient()
@@ -133,6 +142,7 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.classifier_rules = classifier_rules
     app.state.model_matrix = model_matrix
+    app.state.policy_matrix = policy_matrix
     app.state.http_client = http_client
 
     logger.info(
@@ -141,6 +151,7 @@ async def lifespan(app: FastAPI):
             "extra_fields": {
                 "rules_loaded": classifier_rules.total_keyword_count,
                 "models_loaded": len(model_matrix.models),
+                "policy_roles_loaded": len(policy_matrix.roles),
             }
         },
     )

@@ -31,6 +31,31 @@ DOWNSTREAM_URL = "http://security-layer:8081"
 
 
 # ---------------------------------------------------------------------------
+# Identity resolution stub (Phase 2 — RBAC + per-user API keys)
+#
+# AuthMiddleware now resolves X-Api-Key against the Admin Portal instead of
+# a static comparison. These tests aren't exercising identity resolution, so
+# mirror the old static-key behaviour: VALID_KEY resolves to a developer
+# identity, anything else is unresolved.
+# ---------------------------------------------------------------------------
+
+async def _fake_resolve_key(key, client):
+    from api_gateway.services.key_resolver import KeyProfile
+
+    if key == VALID_KEY:
+        return KeyProfile(
+            user_id="poc-user",
+            username="poc-user",
+            department="poc",
+            roles=["developer"],
+            model_entitlements=[],
+            key_id="test-key-id",
+            rate_limit_override=None,
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
 # 9.2.5 -- Empty GATEWAY_API_KEY raises pydantic.ValidationError
 # ---------------------------------------------------------------------------
 
@@ -135,6 +160,7 @@ def test_log_level_error_suppresses_info_entries(monkeypatch, capsys):
 
     get_settings.cache_clear()
     RateLimitMiddleware._store.clear()
+    monkeypatch.setattr("api_gateway.middleware.auth.resolve_key", _fake_resolve_key)
 
     app = create_app()
 
@@ -183,6 +209,7 @@ def test_log_level_info_emits_request_log_entries(monkeypatch, capsys):
 
     get_settings.cache_clear()
     RateLimitMiddleware._store.clear()
+    monkeypatch.setattr("api_gateway.middleware.auth.resolve_key", _fake_resolve_key)
 
     app = create_app()
 

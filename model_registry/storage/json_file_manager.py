@@ -231,6 +231,43 @@ class JsonFileManager:
 
         return updated_record
 
+    def update_api_key(self, name: str, api_key: str) -> ModelRecord:
+        """
+        Update the api_key of an existing ModelRecord.
+
+        Calls _persist() after updating in-memory state; rolls back the
+        change if _persist() raises. Mirrors update_status().
+
+        Args:
+            name:    Exact name of the model to update.
+            api_key: The new provider API key (plaintext).
+
+        Returns:
+            The updated ModelRecord.
+
+        Raises:
+            ModelNotFoundError: If no record with the given name exists.
+            PersistenceError: If the atomic write to STORAGE_PATH fails.
+        """
+        if name not in self._records:
+            raise ModelNotFoundError(name)
+
+        original_record = self._records[name]
+        original_api_key = original_record.api_key
+
+        updated_record = original_record.model_copy(update={"api_key": api_key})
+        self._records[name] = updated_record
+
+        try:
+            self._persist()
+        except PersistenceError:
+            self._records[name] = original_record.model_copy(
+                update={"api_key": original_api_key}
+            )
+            raise
+
+        return updated_record
+
     # ------------------------------------------------------------------
     # Health check
     # ------------------------------------------------------------------

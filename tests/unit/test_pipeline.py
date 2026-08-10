@@ -32,6 +32,7 @@ from intelligent_router.model_selector import (  # noqa: E402
     ModelEntry,
 )
 from intelligent_router.fallback_manager import FallbackState  # noqa: E402
+from intelligent_router.policy import PolicyMatrix  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +71,19 @@ def mock_state():
     # Default: rules that classify as "chat"
     state.classifier_rules = ClassifierRules(rules={}, default="chat")
     state.model_matrix = _make_single_model_matrix()
+    # Phase 2 — RBAC: permits "developer" (the role _base_imf sends) for
+    # every task_type these tests use.
+    state.policy_matrix = PolicyMatrix(
+        roles={
+            "developer": {
+                "chat": True,
+                "code": True,
+                "reasoning": True,
+                "summarization": True,
+                "translation": True,
+            }
+        }
+    )
     return state
 
 
@@ -82,6 +96,12 @@ def _base_imf(
     """Return a minimal valid IMF dict."""
     return {
         "request_id": "11111111-1111-4111-8111-111111111111",
+        "user": {
+            "user_id": "test-user",
+            "department": "poc",
+            "roles": ["developer"],
+            "auth_method": "api_key",
+        },
         "request": {
             "messages": [{"role": "user", "content": "Hello"}],
             "task_type": task_type,
@@ -499,3 +519,93 @@ class TestPipelineResultDataclass:
         assert result.success is False
         assert result.status_code == 400
         assert result.error_code == "governance_check_failed"
+
+
+# ---------------------------------------------------------------------------
+# Stage 2b: Policy & Entitlement Check (Phase 2 — RBAC + per-user API keys)
+# ---------------------------------------------------------------------------
+
+
+class TestPolicyAndEntitlementChecks:
+    @pytest.mark.asyncio
+    async def test_role_without_task_permission_returns_403_policy_denied(self, mock_state):
+        imf = _base_imf()
+        imf["user"]["roles"] = ["viewer"]
+        mock_state.policy_matrix = PolicyMatrix(roles={"viewer": {"chat": False}})
+        bt = BackgroundTasks()
+
+        with (
+            patch("intelligent_router.pipeline.classify_task", return_value="chat"),
+            patch("intelligent_router.pipeline.post_audit_event", new_callable=AsyncMock),
+        ):
+            result = await run_routing_pipeline(imf, mock_state, bt)
+
+        assert result.status_code == 403
+        assert result.error_code == "policy_denied"
+
+    @pytest.mark.asyncio
+    async def test_model_not_in_entitlements_returns_403(self, mock_state):
+        imf = _base_imf()
+        imf["user"]["model_entitlements"] = ["some-other-model"]
+        bt = BackgroundTasks()
+
+        with (
+            patch("intelligent_router.pipeline.classify_task", return_value="chat"),
+            patch("intelligent_router.pipeline.post_audit_event", new_callable=AsyncMock),
+        ):
+            result = await run_routing_pipeline(imf, mock_state, bt)
+
+        assert result.status_code == 403
+        assert result.error_code == "model_not_entitled"
+
+    @pytest.mark.asyncio
+    async def test_empty_entitlements_allows_any_model(self, mock_state):
+        imf = _base_imf()
+        imf["user"]["model_entitlements"] = []
+        bt = BackgroundTasks()
+
+        with (
+            patch("intelligent_router.pipeline.classify_task", return_value="chat"),
+            patch("intelligent_router.pipeline.check_model_health", new_callable=AsyncMock, return_value=True),
+            patch(
+                "intelligent_router.pipeline.cache_lookup",
+                new_callable=AsyncMock,
+                return_value={"hit": False},
+            ),
+            patch(
+                "intelligent_router.pipeline.call_inference",
+                new_callable=AsyncMock,
+                return_value={"response": {"content": "hi", "finish_reason": "stop", "usage": {}}},
+            ),
+            patch("intelligent_router.pipeline.cache_write", new_callable=AsyncMock),
+            patch("intelligent_router.pipeline.post_audit_event", new_callable=AsyncMock),
+        ):
+            result = await run_routing_pipeline(imf, mock_state, bt)
+
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_entitled_model_passes_check(self, mock_state):
+        imf = _base_imf()
+        imf["user"]["model_entitlements"] = ["llama3-chat"]  # matches _make_single_model_matrix()
+        bt = BackgroundTasks()
+
+        with (
+            patch("intelligent_router.pipeline.classify_task", return_value="chat"),
+            patch("intelligent_router.pipeline.check_model_health", new_callable=AsyncMock, return_value=True),
+            patch(
+                "intelligent_router.pipeline.cache_lookup",
+                new_callable=AsyncMock,
+                return_value={"hit": False},
+            ),
+            patch(
+                "intelligent_router.pipeline.call_inference",
+                new_callable=AsyncMock,
+                return_value={"response": {"content": "hi", "finish_reason": "stop", "usage": {}}},
+            ),
+            patch("intelligent_router.pipeline.cache_write", new_callable=AsyncMock),
+            patch("intelligent_router.pipeline.post_audit_event", new_callable=AsyncMock),
+        ):
+            result = await run_routing_pipeline(imf, mock_state, bt)
+
+        assert result.success is True

@@ -166,7 +166,8 @@ async def chat_completions(
     # ------------------------------------------------------------------
     # Step 1 — Normalize payload into IMF
     # ------------------------------------------------------------------
-    imf = build_imf(payload)
+    user_profile = getattr(request.state, "user_profile", None)
+    imf = build_imf(payload, user_profile)
     request_id = imf.request_id
 
     # Propagate request_id to request state so middleware can correlate logs

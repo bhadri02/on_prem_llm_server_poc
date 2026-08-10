@@ -45,7 +45,7 @@ from datetime import datetime
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 
 from admin_portal.config import settings
@@ -58,6 +58,7 @@ from admin_portal.metrics import (
 from admin_portal.schemas.audit import AuditEvent, AuditEventList
 from admin_portal.schemas.errors import ErrorResponse
 from admin_portal.services.proxy import ProxyUnavailableError, async_proxy
+from admin_portal.services.session_auth import require_admin
 
 # ---------------------------------------------------------------------------
 # Module-level HTTP client — reused across requests for connection pooling.
@@ -80,7 +81,7 @@ _UUID_V4_RE = re.compile(
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
-router = APIRouter(tags=["audit"])
+router = APIRouter(tags=["audit"], dependencies=[Depends(require_admin)])
 
 
 # ---------------------------------------------------------------------------

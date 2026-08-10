@@ -47,6 +47,12 @@ class IMFUser(BaseModel):
     department: str = "poc"
     roles: list[str] = Field(default_factory=lambda: ["developer"])
     auth_method: str = "api_key"
+    # Populated server-side from the resolved API key profile (Phase 2 —
+    # RBAC + per-user API keys). Optional/empty-safe so older callers that
+    # don't set them keep working unchanged.
+    key_id: str | None = None
+    model_entitlements: list[str] = Field(default_factory=list)
+    rate_limit_override: int | None = None
 
 
 class IMFRequest(BaseModel):

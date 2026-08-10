@@ -54,10 +54,10 @@ helm install cache llm-platform/charts/cache \
 | `env.REDIS_URL` | `"redis://redis-master:6379"` | Redis connection URL; override if release name differs |
 | `env.SIMILARITY_THRESHOLD` | `"0.90"` | Minimum cosine similarity for a semantic cache hit (0.0–1.0) |
 | `env.EMBEDDING_MODEL` | `"all-MiniLM-L6-v2"` | Sentence-transformers model name for embedding generation |
+| `env.HF_HUB_OFFLINE` | `"1"` | Forces the embedding model to load from the image's local HF cache only — never phones home to the Hub. The model must be pre-fetched into the image at build time. |
+| `env.TRANSFORMERS_OFFLINE` | `"1"` | Same offline guarantee, for the underlying `transformers` library |
 | `env.MAX_SEMANTIC_ENTRIES` | `"500"` | Maximum entries per task-type in the semantic cache list |
-| `env.TTL_CHAT` | `"3600"` | Redis TTL (seconds) for `task_type: chat` entries |
-| `env.TTL_CODE` | `"7200"` | Redis TTL (seconds) for `task_type: code` entries |
-| `env.TTL_SUMMARIZATION` | `"86400"` | Redis TTL (seconds) for `task_type: summarization` entries |
+| `env.CACHE_TTL_SECONDS` | `"60"` | Cache TTL (seconds), uniform across every `task_type` — applies to both the exact-match and semantic caches; a hit older than this is treated as a miss |
 | `redis.enabled` | `true` | Deploy the Bitnami Redis sub-chart |
 | `redis.architecture` | `standalone` | Redis deployment mode (POC: single instance) |
 | `redis.auth.enabled` | `false` | Redis authentication (disabled for POC) |

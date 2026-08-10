@@ -36,6 +36,7 @@ from pytest_httpx import HTTPXMock
 
 from intelligent_router.main import create_app
 from intelligent_router.model_selector import ModelEntry, ModelMatrix
+from intelligent_router.policy import PolicyMatrix
 from intelligent_router.task_classifier import ClassifierRules
 
 # ---------------------------------------------------------------------------
@@ -169,6 +170,21 @@ def _make_settings() -> MagicMock:
     return mock_settings
 
 
+def _make_policy_matrix() -> PolicyMatrix:
+    """Permit the roles these tests send ("developer", "admin") for every
+    task_type — Phase 2 (RBAC) enforcement isn't what these tests exercise."""
+    _all_tasks_allowed = {
+        "chat": True,
+        "code": True,
+        "reasoning": True,
+        "summarization": True,
+        "translation": True,
+    }
+    return PolicyMatrix(
+        roles={"developer": dict(_all_tasks_allowed), "admin": dict(_all_tasks_allowed)}
+    )
+
+
 def _build_app(http_client: httpx.AsyncClient):
     """Create a fresh FastAPI app and populate app.state directly.
 
@@ -182,6 +198,7 @@ def _build_app(http_client: httpx.AsyncClient):
         rules={"code": ["def ", "function"]}, default="chat"
     )
     app.state.model_matrix = _make_model_matrix()
+    app.state.policy_matrix = _make_policy_matrix()
     app.state.http_client = http_client
     return app
 
@@ -462,6 +479,10 @@ async def test_imf_field_preservation(httpx_mock: HTTPXMock):
         "department": "preserve-dept",
         "roles": ["admin", "developer"],
         "auth_method": "oidc",
+        # Phase 2 — RBAC + per-user API keys: these must round-trip too.
+        "key_id": "preserve-key-001",
+        "model_entitlements": ["llama3.2:3b"],
+        "rate_limit_override": 42,
     }
     rich_imf["governance"] = {
         "pii_masked": True,

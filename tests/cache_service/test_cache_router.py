@@ -136,6 +136,18 @@ class TestWrite:
         resp = await app_client.post("/cache/write", json=body)
         assert resp.status_code == 422
 
+    @pytest.mark.parametrize("task_type", ["chat", "code", "summarization", "reasoning", "translation"])
+    async def test_write_ttl_is_uniform_60s_across_task_types(self, app_client, fake_redis, task_type):
+        """Exact-cache TTL is the same (60s default) for every task_type —
+        no more per-format differentiation (chat=1h/code=2h/summarization=24h)."""
+        body = _imf_body(task_type=task_type, response={"content": "answer", "finish_reason": "stop"})
+        resp = await app_client.post("/cache/write", json=body)
+        assert resp.status_code == 200
+        cache_key = resp.json()["cache_key"]
+
+        ttl = await fake_redis.ttl(f"exact:{cache_key}")
+        assert 0 < ttl <= 60
+
     async def test_write_redis_unavailable_returns_503(self, app_client, fake_redis):
         """Returns 503 when Redis is unavailable during exact cache write."""
         import redis as redis_lib

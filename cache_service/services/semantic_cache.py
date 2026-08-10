@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 
 import redis
 
@@ -33,7 +34,9 @@ class SemanticCacheService:
         {
             "key":       "<sha256-hex>",
             "embedding": [<float>, ...],   # 384-dimensional vector
-            "response":  {<IMF response>}
+            "response":  {<IMF response>},
+            "timestamp": <float>            # time.time() at write — used to
+                                             # expire entries after settings.cache_ttl_seconds
         }
 
     Args:
@@ -122,11 +125,31 @@ class SemanticCacheService:
         if not raw_entries:
             return None
 
+        now = time.time()
+        ttl = self._settings.cache_ttl_seconds
+
         best_score: float = -1.0
         best_response: dict | None = None
 
         for raw in raw_entries:
             entry: dict = json.loads(raw)
+
+            # Age check (Req: semantic hits expire after the same TTL as the
+            # exact cache, uniformly across task_type). Entries with no
+            # "timestamp" (older data / hand-built test fixtures) are
+            # treated as always-fresh rather than crashing or auto-expiring.
+            timestamp = entry.get("timestamp")
+            if timestamp is not None and (now - timestamp) > ttl:
+                # Lazily evict — Redis Lists have no native per-element TTL,
+                # so an expired entry only actually disappears once a lookup
+                # walks past it. Best-effort: a failed LREM here doesn't
+                # fail the lookup, it just gets swept next time.
+                try:
+                    await self._redis.lrem(redis_key, 1, raw)
+                except redis.RedisError:
+                    pass
+                continue
+
             stored_embedding: list[float] = entry["embedding"]
             score = self._cosine_similarity(query_embedding, stored_embedding)
 
@@ -184,6 +207,7 @@ class SemanticCacheService:
                 "key": cache_key,
                 "embedding": embedding,
                 "response": response,
+                "timestamp": time.time(),
             }
         )
 

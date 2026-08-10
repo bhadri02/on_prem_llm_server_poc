@@ -40,10 +40,12 @@ class Settings(BaseSettings):
     # Prometheus metrics port — env: METRICS_PORT; defaults to 9091 to avoid collision with inference_adapter (9090)
     metrics_port: int = Field(9091, ge=1, le=65535)
 
-    # TTL values (seconds) per task_type — envs: TTL_CHAT, TTL_CODE, TTL_SUMMARIZATION
-    ttl_chat: int = Field(3600, gt=0)
-    ttl_code: int = Field(7200, gt=0)
-    ttl_summarization: int = Field(86400, gt=0)
+    # Cache TTL (seconds) — env: CACHE_TTL_SECONDS. Applies uniformly to both
+    # the exact-match cache (native Redis key expiry) and the semantic cache
+    # (age-checked at lookup time, since it's stored as a shared Redis List
+    # rather than one key per entry) — same TTL, same behavior, every
+    # task_type. A cache hit older than this is treated as a miss.
+    cache_ttl_seconds: int = Field(60, gt=0)
 
     # ── Distributed tracing (opt-in, disabled by default for POC) ──────────
     tracing_enabled: bool = False   # TRACING_ENABLED

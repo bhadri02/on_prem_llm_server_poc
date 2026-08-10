@@ -24,6 +24,7 @@ import sys
 
 from inference_adapter.config import Settings
 from inference_adapter.schemas.imf import IMFDocument, IMFResponse, IMFUsage
+from inference_adapter.services.anthropic_client import AnthropicInvalidResponseError
 from inference_adapter.services.ollama_client import OllamaInvalidResponseError
 
 
@@ -226,6 +227,168 @@ class IMFMapper:
         }
 
         # ---- build new IMFDocument without mutating imf_in ---------------
+        return imf_in.model_copy(
+            update={
+                "response": response,
+                "metadata": metadata,
+                "extensions": {},
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # IMF → Anthropic
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def to_anthropic_request(imf: IMFDocument, settings: Settings) -> dict:
+        """Translate an ``IMFDocument`` into an Anthropic ``/v1/messages`` payload.
+
+        Anthropic's wire format differs from Ollama's in two structural ways
+        this mapping has to account for:
+          - the system prompt is a top-level ``system`` string, not a
+            ``{"role": "system", ...}`` entry inside ``messages``;
+          - ``max_tokens`` is a required field, not an optional sampling knob.
+
+        Args:
+            imf:      The inbound IMF envelope. ``routing.selected_model``
+                      is used as the Anthropic model name.
+            settings: Application settings supplying token defaults/limits
+                      (the same ``default_max_tokens`` / ``max_tokens_limit``
+                      / ``default_temperature`` used for Ollama).
+
+        Returns:
+            A dict with keys ``model``, ``messages``, ``max_tokens``,
+            ``temperature``, and ``system`` (only when a system message is
+            present).
+        """
+        model = imf.routing.selected_model
+
+        system_parts = [m.content for m in imf.request.messages if m.role == "system"]
+        messages = [
+            {"role": m.role, "content": m.content}
+            for m in imf.request.messages
+            if m.role != "system"
+        ]
+
+        requested_max = imf.request.max_tokens
+        if not requested_max:
+            max_tokens = settings.default_max_tokens
+        elif requested_max > settings.max_tokens_limit:
+            max_tokens = settings.max_tokens_limit
+        else:
+            max_tokens = requested_max
+
+        temperature = (
+            imf.request.temperature
+            if imf.request.temperature is not None
+            else settings.default_temperature
+        )
+
+        payload = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if system_parts:
+            payload["system"] = "\n".join(system_parts)
+        return payload
+
+    # ------------------------------------------------------------------
+    # Anthropic → IMF
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def resolve_anthropic_finish_reason(stop_reason: str | None) -> str | None:
+        """Map an Anthropic ``stop_reason`` string to an IMF ``finish_reason``.
+
+        Args:
+            stop_reason: The ``stop_reason`` field from the Anthropic
+                         response, or ``None`` if absent.
+
+        Returns:
+            ``"stop"``   for ``"end_turn"`` or ``"stop_sequence"``
+            ``"length"`` for ``"max_tokens"``
+            ``None``     for every other value (including ``None`` and
+                         ``"tool_use"`` — tool calls are out of scope here)
+        """
+        if stop_reason in ("end_turn", "stop_sequence"):
+            return "stop"
+        if stop_reason == "max_tokens":
+            return "length"
+        return None
+
+    @staticmethod
+    def to_imf_response_from_anthropic(
+        imf_in: IMFDocument,
+        anthropic_resp: dict,
+        wall_clock_ms: int,
+    ) -> IMFDocument:
+        """Build an outbound ``IMFDocument`` from the Anthropic response.
+
+        Preserves all fields from ``imf_in`` that are not ``response``,
+        ``metadata``, or ``extensions``. Returns a **new** ``IMFDocument``
+        — the input is never mutated. Mirrors ``to_imf_response`` (the
+        Ollama equivalent).
+
+        Args:
+            imf_in:         The original inbound ``IMFDocument``.
+            anthropic_resp: The parsed JSON dict returned by
+                            ``AnthropicClient.messages()``.
+            wall_clock_ms:  Caller-measured wall-clock latency in
+                            milliseconds — Anthropic's response doesn't
+                            report server-side generation time, so this is
+                            the only latency figure available.
+
+        Returns:
+            A new ``IMFDocument`` with ``response``, ``metadata``, and
+            ``extensions`` populated.
+
+        Raises:
+            AnthropicInvalidResponseError: If ``anthropic_resp["content"]``
+                is missing, empty, or has no text block.
+        """
+        content_blocks = anthropic_resp.get("content")
+        if not content_blocks or not isinstance(content_blocks, list):
+            raise AnthropicInvalidResponseError(
+                'Anthropic response missing or empty "content" array'
+            )
+
+        text_parts = [
+            block.get("text", "")
+            for block in content_blocks
+            if isinstance(block, dict) and block.get("type") == "text"
+        ]
+        if not text_parts:
+            raise AnthropicInvalidResponseError(
+                'Anthropic response "content" has no text block'
+            )
+        content = "".join(text_parts)
+
+        finish_reason = IMFMapper.resolve_anthropic_finish_reason(
+            anthropic_resp.get("stop_reason")
+        )
+
+        usage_block = anthropic_resp.get("usage") or {}
+        prompt_tokens = usage_block.get("input_tokens") or 0
+        completion_tokens = usage_block.get("output_tokens") or 0
+
+        response = IMFResponse(
+            content=content,
+            finish_reason=finish_reason,
+            usage=IMFUsage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=prompt_tokens + completion_tokens,
+            ),
+        )
+
+        metadata = {
+            "inference_backend": "anthropic",
+            "inference_latency_ms": wall_clock_ms,
+            "model_name": imf_in.routing.selected_model,
+        }
+
         return imf_in.model_copy(
             update={
                 "response": response,

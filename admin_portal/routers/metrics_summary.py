@@ -28,10 +28,13 @@ import time
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import Response
+from sqlalchemy.orm import Session
 
 from admin_portal.config import settings
+from admin_portal.db.models import User
+from admin_portal.db.session import get_db
 from admin_portal.metrics import (
     get_status_class,
     llm_portal_errors_total,
@@ -40,6 +43,7 @@ from admin_portal.metrics import (
 )
 from admin_portal.schemas.errors import ErrorResponse
 from admin_portal.schemas.metrics import MetricsSummary
+from admin_portal.services.session_auth import require_admin
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -56,7 +60,7 @@ _QUERY_CACHE_TOTAL = "llm_cache_requests_total"
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
-router = APIRouter(prefix="/metrics", tags=["metrics"])
+router = APIRouter(prefix="/metrics", tags=["metrics"], dependencies=[Depends(require_admin)])
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +127,7 @@ def _sum_results(prom_response: dict) -> Optional[float]:
         "unreachable or returns a non-2xx response within 5 seconds."
     ),
 )
-async def get_metrics_summary() -> Response:
+async def get_metrics_summary(db: Session = Depends(get_db)) -> Response:
     """Query Prometheus for operational metrics and return a MetricsSummary.
 
     Issues up to four instant queries to Prometheus:
@@ -192,6 +196,14 @@ async def get_metrics_summary() -> Response:
     else:
         cache_hit_rate = (cache_hits_val or 0.0) / cache_total_val
 
+    # --- Active users — DB-backed, independent of Prometheus. Never lets a
+    # DB hiccup turn an otherwise-successful metrics response into a 502;
+    # active_users is simply null if the query fails. -----------------------
+    try:
+        active_users = db.query(User).filter_by(status="active").count()
+    except Exception:
+        active_users = None
+
     # --- Emit metrics and return --------------------------------------------
     latency = time.monotonic() - t_start
     llm_portal_latency_seconds.labels(endpoint=_ENDPOINT).observe(latency)
@@ -201,6 +213,7 @@ async def get_metrics_summary() -> Response:
         request_rate=request_rate,
         error_rate=error_rate,
         cache_hit_rate=cache_hit_rate,
+        active_users=active_users,
     )
     return Response(
         content=summary.model_dump_json(),

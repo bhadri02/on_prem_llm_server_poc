@@ -10,6 +10,8 @@ Validates: Requirements 5.1, 5.2, 6.1, 1.4, 2.5
 
 from __future__ import annotations
 
+import os
+
 from cache_service.exceptions import EmbeddingEncodeError, EmbeddingLoadError
 
 
@@ -46,6 +48,20 @@ class EmbeddingGenerator:
             EmbeddingLoadError: If the model fails to load for any reason.
         """
         try:
+            # This is an on-prem/air-gapped-capable platform — the embedding
+            # model must load from the local HF cache only, never phone home
+            # to the Hub. Without this, SentenceTransformer() makes a network
+            # call on every startup to check for updates (visible as the
+            # "sending unauthenticated requests to the HF Hub" warning), which
+            # silently degrades to a slow/hanging startup with no internet.
+            # setdefault (not direct assignment) so an operator who explicitly
+            # needs to pull a NEW model for the first time can still override
+            # by exporting HF_HUB_OFFLINE=0 before starting the service —
+            # exactly the same "fetch once with internet, then run offline"
+            # pattern already used for `ollama pull` in this repo.
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
             from sentence_transformers import SentenceTransformer  # import here to keep startup flexible
 
             self._model = SentenceTransformer(self.model_name, device="cpu")

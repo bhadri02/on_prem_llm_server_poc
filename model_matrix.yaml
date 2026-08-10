@@ -19,9 +19,47 @@ models:
     health_url: http://localhost:11434/api/tags
     fallback: null
 
+  # Second local Ollama model — not wired into task_defaults below, so it's
+  # reachable only via pinned routing (request.model = "qwen2.5:3b") or a
+  # user's model entitlements; auto-routing keeps defaulting to llama3.2:3b.
+  qwen2.5:3b:
+    backend: ollama
+    endpoint: http://localhost:11434
+    tasks:
+      - chat
+      - code
+      - reasoning
+      - summarization
+      - translation
+    health_url: http://localhost:11434/api/tags
+    fallback: llama3.2:3b
+
+  # Cloud model — dispatched by the Inference Adapter via the Anthropic
+  # Messages API. The provider API key is stored in the Model Registry
+  # (admin_portal "Register model" / "Set API key" UI), NOT here — the
+  # Inference Adapter looks it up by model name at dispatch time (see
+  # inference_adapter/services/model_backend_resolver.py).
+  #
+  # Not wired into task_defaults below, so it is reachable only via pinned
+  # routing (request.model = "claude-sonnet-5") or a user's model
+  # entitlements — auto-routing keeps defaulting to the free local model.
+  # health_url is unused for non-ollama backends (see pipeline.py Stage 3 —
+  # cloud-backend health checks are skipped, not probed over the network).
+  claude-sonnet-5:
+    backend: anthropic
+    endpoint: https://api.anthropic.com
+    tasks:
+      - chat
+      - code
+      - reasoning
+      - summarization
+      - translation
+    health_url: https://api.anthropic.com/v1/models
+    fallback: llama3.2:3b
+
 task_defaults:
   chat: "llama3.2:3b"
-  code: "llama3.2:3b"
-  reasoning: "llama3.2:3b"
+  code: "qwen2.5:3b"
+  reasoning: "qwen2.5:3b"
   summarization: "llama3.2:3b"
   translation: "llama3.2:3b"

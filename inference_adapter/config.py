@@ -36,6 +36,22 @@ class Settings(BaseSettings):
     # Ollama HTTP timeout in seconds — env: OLLAMA_TIMEOUT_SECONDS; int in [1, 600]
     ollama_timeout_seconds: int = Field(120, ge=1, le=600)
 
+    # ── Cloud-backend dispatch (Anthropic, etc.) ────────────────────────────
+    # Model Registry — consulted only for models whose routing.backend != "ollama",
+    # to fetch the provider API key. env: MODEL_REGISTRY_URL, REGISTRY_API_KEY
+    model_registry_url: str = "http://model-registry:5001"
+    registry_api_key: str = ""
+    # env: ANTHROPIC_BASE_URL — Anthropic has one fixed API endpoint (unlike
+    # Ollama, which is a local per-deployment URL), so this is a single
+    # setting rather than something resolved per-model from the registry.
+    anthropic_base_url: str = "https://api.anthropic.com"
+    # env: ANTHROPIC_API_VERSION — required `anthropic-version` header value
+    anthropic_api_version: str = "2023-06-01"
+    # env: ANTHROPIC_TIMEOUT_SECONDS
+    anthropic_timeout_seconds: int = Field(120, ge=1, le=600)
+    # env: MODEL_BACKEND_CACHE_TTL_SECONDS — TTL for the resolved-secret cache
+    model_backend_cache_ttl_seconds: float = Field(30.0, gt=0)
+
     # Structured log level — env: LOG_LEVEL; invalid values silently fall back to "INFO"
     log_level: str = "INFO"
 

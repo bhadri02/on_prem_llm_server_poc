@@ -40,12 +40,19 @@ from starlette.routing import Mount
 
 from admin_portal.metrics import metrics_app
 from admin_portal.middleware.logging import LoggingMiddleware
+from admin_portal.routers import auth as auth_router_module
 from admin_portal.routers import health as health_router_module
 from admin_portal.routers import config as config_router_module
 from admin_portal.routers import playground as playground_router_module
 from admin_portal.routers import audit as audit_router_module
 from admin_portal.routers import models as models_router_module
+from admin_portal.routers import ollama_admin as ollama_admin_router_module
+from admin_portal.routers import policy as policy_router_module
 from admin_portal.routers import metrics_summary as metrics_summary_router_module
+from admin_portal.routers import keys as keys_router_module
+from admin_portal.routers import users as users_router_module
+from admin_portal.routers import roles as roles_router_module
+from admin_portal.routers import chat as chat_router_module
 
 _logger = logging.getLogger(__name__)
 
@@ -81,6 +88,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             settings.API_GATEWAY_URL,
             settings.LOG_LEVEL,
         )
+
+        # --- Users/roles/API-keys DB (Phase 1) --------------------------
+        # Idempotent: safe to run on every boot. Failure here is a hard
+        # startup failure — the resolve endpoint (and therefore all
+        # authenticated traffic through the Gateway) depends on this DB.
+        from admin_portal.db.migrations import run_additive_migrations
+        from admin_portal.db.models import Base
+        from admin_portal.db.seed import run_startup_seed
+        from admin_portal.db.session import SessionLocal, engine
+
+        Base.metadata.create_all(engine)
+        run_additive_migrations(engine)
+        db = SessionLocal()
+        try:
+            run_startup_seed(db, settings.GATEWAY_API_KEY, settings.SEED_ADMIN_PASSWORD)
+        finally:
+            db.close()
+        _logger.info("Users/roles/API-keys DB ready and seeded.")
     except SystemExit:
         # config.py already called sys.exit(1) — propagate.
         raise
@@ -132,12 +157,19 @@ def create_app() -> FastAPI:
     # ------------------------------------------------------------------
     _portal_prefix = "/portal"
 
+    app.include_router(auth_router_module.router, prefix=_portal_prefix)
     app.include_router(health_router_module.router, prefix=_portal_prefix)
     app.include_router(config_router_module.router, prefix=_portal_prefix)
     app.include_router(playground_router_module.router, prefix=_portal_prefix)
     app.include_router(audit_router_module.router, prefix=_portal_prefix)
     app.include_router(models_router_module.router, prefix=_portal_prefix)
+    app.include_router(ollama_admin_router_module.router, prefix=_portal_prefix)
+    app.include_router(policy_router_module.router, prefix=_portal_prefix)
     app.include_router(metrics_summary_router_module.router, prefix=_portal_prefix)
+    app.include_router(keys_router_module.router, prefix=_portal_prefix)
+    app.include_router(users_router_module.router, prefix=_portal_prefix)
+    app.include_router(roles_router_module.router, prefix=_portal_prefix)
+    app.include_router(chat_router_module.router, prefix=_portal_prefix)
 
     return app
 

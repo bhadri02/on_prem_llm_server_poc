@@ -35,6 +35,7 @@ import intelligent_router.metrics as ir_metrics
 from intelligent_router.main import create_app
 from intelligent_router.metrics_app import metrics_app
 from intelligent_router.model_selector import ModelEntry, ModelMatrix
+from intelligent_router.policy import PolicyMatrix
 from intelligent_router.task_classifier import ClassifierRules
 
 # ---------------------------------------------------------------------------
@@ -128,11 +129,14 @@ def reset_router_metrics():
 # ---------------------------------------------------------------------------
 
 
-def _valid_mock_settings(matrix_path: str, rules_path: str) -> MagicMock:
+def _valid_mock_settings(
+    matrix_path: str, rules_path: str, policy_path: str = "policy_matrix.yaml"
+) -> MagicMock:
     """Return a fully-valid mock Settings for lifespan startup."""
     s = MagicMock()
     s.model_matrix_path = matrix_path
     s.task_rules_path = rules_path
+    s.policy_matrix_path = policy_path
     s.audit_store_url = "http://audit-store:9200"
     s.cache_url = "http://cache:8086"
     s.inference_adapter_url = "http://inference-adapter:8087"
@@ -182,6 +186,17 @@ def _build_app_with_state(http_client: httpx.AsyncClient):
             "translation": PRIMARY_MODEL_NAME,
         },
     )
+    app.state.policy_matrix = PolicyMatrix(
+        roles={
+            "developer": {
+                "chat": True,
+                "code": True,
+                "reasoning": True,
+                "summarization": True,
+                "translation": True,
+            }
+        }
+    )
     app.state.http_client = http_client
     return app
 
@@ -211,10 +226,12 @@ async def test_valid_startup_populates_app_state_and_health(tmp_path):
     """
     rules_file = tmp_path / "task_classifier_rules.yaml"
     matrix_file = tmp_path / "model_matrix.yaml"
+    policy_file = tmp_path / "policy_matrix.yaml"
     shutil.copy("task_classifier_rules.yaml", rules_file)
     shutil.copy("model_matrix.yaml", matrix_file)
+    shutil.copy("policy_matrix.yaml", policy_file)
 
-    mock_settings = _valid_mock_settings(str(matrix_file), str(rules_file))
+    mock_settings = _valid_mock_settings(str(matrix_file), str(rules_file), str(policy_file))
     app = create_app()
 
     with patch.object(main_mod, "settings", mock_settings):

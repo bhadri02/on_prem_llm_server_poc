@@ -9,9 +9,11 @@ from __future__ import annotations
 import pytest
 
 from api_gateway.schemas.imf import (
+    IMFCache,
     IMFDocument,
     IMFRequest,
     IMFResponse,
+    IMFRouting,
     IMFUsage,
 )
 from api_gateway.services.serializer import serialize_response
@@ -21,6 +23,9 @@ def _make_imf(
     *,
     request_id: str = "test-request-id",
     model: str | None = "gpt-4",
+    selected_model: str | None = None,
+    task_type: str | None = None,
+    lookup_hit: bool = False,
     content: str | None = "Hello!",
     finish_reason: str | None = "stop",
     prompt_tokens: int = 10,
@@ -31,7 +36,9 @@ def _make_imf(
         request_id=request_id,
         trace_id=request_id,
         timestamp_utc="2024-01-01T00:00:00Z",
-        request=IMFRequest(model=model),
+        request=IMFRequest(model=model, task_type=task_type),
+        routing=IMFRouting(selected_model=selected_model),
+        cache=IMFCache(lookup_hit=lookup_hit),
         response=IMFResponse(
             content=content,
             finish_reason=finish_reason,
@@ -100,6 +107,47 @@ def test_model_is_mapped_from_imf():
 def test_model_is_empty_string_when_none():
     result = serialize_response(_make_imf(model=None))
     assert result["model"] == ""
+
+
+def test_model_prefers_selected_model_over_requested_model():
+    """Auto-routing: the caller pinned nothing (or pinned something else),
+    routing.selected_model is what actually served the request — that's
+    what a client (and the Portal UI's Chat view) needs to see."""
+    result = serialize_response(_make_imf(model=None, selected_model="llama3.2:3b"))
+    assert result["model"] == "llama3.2:3b"
+
+
+def test_model_falls_back_to_request_model_when_selected_model_absent():
+    """Defensive fallback — should never happen in practice (the Router
+    always sets routing.selected_model on success), but must not regress
+    to an empty string if it somehow does."""
+    result = serialize_response(_make_imf(model="llama3", selected_model=None))
+    assert result["model"] == "llama3"
+
+
+# ---------------------------------------------------------------------------
+# task_type / cache_hit extras (Chat UI backend enrichment)
+# ---------------------------------------------------------------------------
+
+
+def test_task_type_matches_imf():
+    result = serialize_response(_make_imf(task_type="summarization"))
+    assert result["task_type"] == "summarization"
+
+
+def test_task_type_none_propagates():
+    result = serialize_response(_make_imf(task_type=None))
+    assert result["task_type"] is None
+
+
+def test_cache_hit_true_propagates():
+    result = serialize_response(_make_imf(lookup_hit=True))
+    assert result["cache_hit"] is True
+
+
+def test_cache_hit_false_propagates():
+    result = serialize_response(_make_imf(lookup_hit=False))
+    assert result["cache_hit"] is False
 
 
 # ---------------------------------------------------------------------------

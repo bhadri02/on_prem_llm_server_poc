@@ -1,0 +1,39 @@
+# policy_matrix.yaml
+# Role x task_type permission matrix for the Intelligent Router (Layer 3).
+# Loaded once at startup; stored on app.state.policy_matrix.
+#
+# Enforced in intelligent_router/pipeline.py immediately after Stage 2
+# (Model Selection) — the earliest point both the classified task_type and
+# the caller's resolved roles are known together. A role/task_type pair not
+# listed here (or a role not listed at all) is treated as DENIED.
+#
+# Matches NEXT_FEATURES_PLAN.md Section 2.3.
+
+roles:
+  viewer:
+    chat: false
+    code: false
+    reasoning: false
+    summarization: false
+    translation: false
+
+  analyst:
+    chat: true
+    code: false
+    reasoning: false
+    summarization: true
+    translation: true
+
+  developer:
+    chat: true
+    code: true
+    reasoning: true
+    summarization: true
+    translation: true
+
+  admin:
+    chat: true
+    code: true
+    reasoning: true
+    summarization: true
+    translation: true

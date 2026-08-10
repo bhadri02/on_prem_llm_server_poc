@@ -20,6 +20,7 @@ param(
 
 $ROOT = Split-Path $PSScriptRoot -Parent
 $ENV_FILE = "$ROOT\local.env"
+$ENV_LOCAL_FILE = "$ROOT\local.env.local"   # optional, untracked, machine-specific overrides
 $PYTHON = "python"
 
 # ── Load .env into current session ──────────────────────────────────────────
@@ -36,6 +37,19 @@ function Load-Env {
         }
     }
     Write-Host "Loaded env from $ENV_FILE" -ForegroundColor DarkGray
+
+    # Untracked override file (e.g. real DATABASE_URL) — loaded after local.env
+    # so its values win. Never committed; see .gitignore.
+    if (Test-Path $ENV_LOCAL_FILE) {
+        Get-Content $ENV_LOCAL_FILE | ForEach-Object {
+            if ($_ -match '^\s*([^#][^=]+)=(.*)$') {
+                $name = $matches[1].Trim()
+                $val  = $matches[2].Trim()
+                [System.Environment]::SetEnvironmentVariable($name, $val, "Process")
+            }
+        }
+        Write-Host "Loaded local overrides from $ENV_LOCAL_FILE" -ForegroundColor DarkGray
+    }
 }
 
 # ── Kill all service processes ───────────────────────────────────────────────
@@ -143,6 +157,17 @@ foreach ($svc in $services) {
             $parts = $_ -split '=', 2
             "`$env:$($parts[0].Trim()) = '$($parts[1].Trim())'"
         }) -join "; "
+
+    # Layer in untracked local overrides (e.g. real DATABASE_URL), if present.
+    if (Test-Path $ENV_LOCAL_FILE) {
+        $localOverrides = (Get-Content $ENV_LOCAL_FILE |
+            Where-Object { $_ -match '^\s*[^#]' -and $_ -match '=' } |
+            ForEach-Object {
+                $parts = $_ -split '=', 2
+                "`$env:$($parts[0].Trim()) = '$($parts[1].Trim())'"
+            }) -join "; "
+        if ($localOverrides) { $envBlock += "; $localOverrides" }
+    }
 
     # Override METRICS_PORT per-service to avoid port collisions
     if ($svc.MetricsPort) {

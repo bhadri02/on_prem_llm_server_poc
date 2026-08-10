@@ -54,8 +54,37 @@ def mock_ollama_client():
     return mock
 
 
+@pytest.fixture
+def mock_anthropic_client():
+    """AnthropicClient-like mock with an async messages() method.
+
+    Tests exercising the cloud-backend path override `.messages` directly
+    (mirrors how Ollama error-path tests override `mock_ollama_client.chat`).
+    """
+    mock = MagicMock()
+    mock.messages = AsyncMock(
+        return_value={
+            "content": [{"type": "text", "text": "Hello from Claude!"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 12, "output_tokens": 7},
+        }
+    )
+    mock.close = AsyncMock()
+    return mock
+
+
+@pytest.fixture
+def mock_registry_http_client():
+    """Plain httpx.AsyncClient-like mock used for Model Registry calls
+    (GET /models/{name}/secret) from model_secret_resolver. Tests override
+    `.get` directly to simulate specific registry responses/failures."""
+    mock = MagicMock()
+    mock.get = AsyncMock()
+    return mock
+
+
 @pytest_asyncio.fixture
-async def app_client(mock_ollama_client):
+async def app_client(mock_ollama_client, mock_anthropic_client, mock_registry_http_client):
     """
     Async HTTP client backed by the real FastAPI app with a stub lifespan
     that injects mock_ollama_client into app.state without starting the
@@ -69,6 +98,8 @@ async def app_client(mock_ollama_client):
         application.state.ollama_client = mock_ollama_client
         application.state.ollama_models = ["llama3.2:3b"]
         application.state.ollama_reachable = True
+        application.state.anthropic_client = mock_anthropic_client
+        application.state.http_client = mock_registry_http_client
 
         health_module._startup_complete = True
         yield
@@ -87,6 +118,18 @@ async def app_client(mock_ollama_client):
     finally:
         app.router.lifespan_context = original_lifespan
         health_module._startup_complete = False
+
+
+@pytest.fixture(autouse=True)
+def clear_model_secret_cache():
+    """Clear model_secret_resolver's in-process cache between tests so a
+    cached result from one test can't leak into the next (same pattern as
+    api_gateway.services.key_resolver's cache-clearing fixture)."""
+    from inference_adapter.services.model_secret_resolver import _cache
+
+    _cache.clear()
+    yield
+    _cache.clear()
 
 
 @pytest.fixture

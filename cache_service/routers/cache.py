@@ -336,12 +336,9 @@ async def write(imf: IMFDocument, request: Request) -> Any:
     )
     prompt_text = " ".join(m.content.strip() for m in imf.request.messages).lower().strip()
 
-    ttl_map = {
-        "chat": settings.ttl_chat,
-        "code": settings.ttl_code,
-        "summarization": settings.ttl_summarization,
-    }
-    ttl: int = ttl_map.get(task_type, 3600)
+    # Uniform TTL across every task_type (Req: cache hits only within 1
+    # minute, then a miss, regardless of format/task).
+    ttl: int = settings.cache_ttl_seconds
 
     response_dict: dict = imf.response.model_dump()
 

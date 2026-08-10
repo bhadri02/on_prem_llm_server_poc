@@ -22,13 +22,23 @@ def serialize_response(imf: IMFDocument) -> dict:
              downstream security / inference pipeline.
 
     Returns:
-        A dict that can be returned directly as a JSON response body.
+        A dict that can be returned directly as a JSON response body. Core
+        fields match the OpenAI chat completion shape; `task_type` and
+        `cache_hit` are additive extras (any OpenAI-compatible client just
+        ignores unknown fields) added so the Portal UI's Chat view can show
+        which task the Router classified this as and whether it served from
+        cache, without a second round-trip.
     """
     return {
         "id": f"chatcmpl-{imf.request_id}",
         "object": "chat.completion",
         "created": int(datetime.now(timezone.utc).timestamp()),
-        "model": imf.request.model or "",
+        # Reflects the model that actually served the request — in "auto"
+        # routing mode imf.request.model is None (the caller didn't pin
+        # one), so routing.selected_model is the only field that's ever
+        # correct here. Falls back to request.model only for extra safety
+        # if selected_model is somehow unset.
+        "model": imf.routing.selected_model or imf.request.model or "",
         "choices": [
             {
                 "index": 0,
@@ -44,4 +54,6 @@ def serialize_response(imf: IMFDocument) -> dict:
             "completion_tokens": imf.response.usage.completion_tokens,
             "total_tokens": imf.response.usage.total_tokens,
         },
+        "task_type": imf.request.task_type,
+        "cache_hit": imf.cache.lookup_hit,
     }

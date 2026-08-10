@@ -14,15 +14,13 @@ class TestDefaults:
     def test_defaults(self):
         """All default values match the spec."""
         s = Settings()
-        assert s.redis_url == "redis://redis:6379"
+        assert s.redis_url == "redis://llm-poc-cache-redis:6379"
         assert s.similarity_threshold == 0.90
         assert s.max_semantic_entries == 500
         assert s.embedding_model == "all-MiniLM-L6-v2"
         assert s.log_level == "INFO"
         assert s.port == 8086
-        assert s.ttl_chat == 3600
-        assert s.ttl_code == 7200
-        assert s.ttl_summarization == 86400
+        assert s.cache_ttl_seconds == 60
 
 
 class TestEnvOverride:
@@ -34,9 +32,7 @@ class TestEnvOverride:
         monkeypatch.setenv("EMBEDDING_MODEL", "custom-model")
         monkeypatch.setenv("LOG_LEVEL", "DEBUG")
         monkeypatch.setenv("PORT", "9000")
-        monkeypatch.setenv("TTL_CHAT", "1800")
-        monkeypatch.setenv("TTL_CODE", "3600")
-        monkeypatch.setenv("TTL_SUMMARIZATION", "43200")
+        monkeypatch.setenv("CACHE_TTL_SECONDS", "120")
 
         s = Settings()
         assert s.redis_url == "redis://myredis:6380"
@@ -45,9 +41,7 @@ class TestEnvOverride:
         assert s.embedding_model == "custom-model"
         assert s.log_level == "DEBUG"
         assert s.port == 9000
-        assert s.ttl_chat == 1800
-        assert s.ttl_code == 3600
-        assert s.ttl_summarization == 43200
+        assert s.cache_ttl_seconds == 120
 
 
 class TestInvalidLogLevel:

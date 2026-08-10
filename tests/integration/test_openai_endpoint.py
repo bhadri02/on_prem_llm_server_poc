@@ -30,6 +30,7 @@ from unittest.mock import MagicMock
 
 from intelligent_router.main import create_app
 from intelligent_router.model_selector import ModelEntry, ModelMatrix
+from intelligent_router.policy import PolicyMatrix
 from intelligent_router.task_classifier import ClassifierRules
 
 # ---------------------------------------------------------------------------
@@ -148,6 +149,23 @@ def _make_rules() -> ClassifierRules:
     )
 
 
+def _make_policy_matrix() -> PolicyMatrix:
+    """Permit "developer" (the role openai_compat.py hardcodes server-side)
+    for every task_type — Phase 2 (RBAC) enforcement isn't what these tests
+    exercise."""
+    return PolicyMatrix(
+        roles={
+            "developer": {
+                "chat": True,
+                "code": True,
+                "reasoning": True,
+                "summarization": True,
+                "translation": True,
+            }
+        }
+    )
+
+
 def _build_app(http_client: httpx.AsyncClient):
     """Create a fresh FastAPI app and populate app.state directly.
 
@@ -158,6 +176,7 @@ def _build_app(http_client: httpx.AsyncClient):
     app.state.settings = _make_settings()
     app.state.classifier_rules = _make_rules()
     app.state.model_matrix = _make_matrix()
+    app.state.policy_matrix = _make_policy_matrix()
     app.state.http_client = http_client
     return app
 
