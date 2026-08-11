@@ -16,11 +16,18 @@ logger = get_logger(__name__)
 # Timeout configuration
 # ---------------------------------------------------------------------------
 
-#: Per-operation timeout used for all Router calls.
-#: connect: 5 s — fail fast if the Router is unreachable.
-#: read/write: 30 s — allow time for the inference pipeline behind the Router.
-#: pool: 5 s — time to wait for an available connection from the pool.
-ROUTER_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=5.0)
+#: Default read/write timeout (seconds) when the caller doesn't specify one —
+#: kept for backward compatibility with callers/tests that don't pass
+#: timeout_seconds. Real traffic should pass settings.router_timeout_seconds
+#: instead (see routers/pre_check.py) — CPU-only Ollama inference can
+#: legitimately take well over 30s, especially with multiple models loaded.
+_DEFAULT_READ_TIMEOUT_SECONDS = 30.0
+
+
+def _build_timeout(read_seconds: float) -> httpx.Timeout:
+    """connect/pool stay short (5s) — those are about *reachability*, not
+    processing time. read/write scale with the caller-supplied budget."""
+    return httpx.Timeout(connect=5.0, read=read_seconds, write=read_seconds, pool=5.0)
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +68,7 @@ async def forward_to_router(
     imf: dict,
     router_url: str,
     request_id: str,
+    timeout_seconds: float | None = None,
 ) -> tuple[int, dict]:
     """Forward an enriched IMF to the downstream Intelligent Router.
 
@@ -72,6 +80,11 @@ async def forward_to_router(
         imf:        The governance-enriched IMF dict to forward.
         router_url: Base URL of the Intelligent Router, e.g. ``http://router:8082``.
         request_id: UUID-v4 of the original request; included as a header.
+        timeout_seconds: Read/write timeout budget for the whole downstream
+                          pipeline (Router + cache + inference). Defaults to
+                          30s if omitted — real callers should pass
+                          settings.router_timeout_seconds instead, since
+                          CPU-only inference can exceed 30s.
 
     Returns:
         A ``(status_code, body_dict)`` tuple.  For 2xx responses the body is
@@ -86,7 +99,8 @@ async def forward_to_router(
                                     (Requirement 9.6).
     """
     try:
-        async with httpx.AsyncClient(timeout=ROUTER_TIMEOUT) as client:
+        timeout = _build_timeout(timeout_seconds if timeout_seconds is not None else _DEFAULT_READ_TIMEOUT_SECONDS)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
                 f"{router_url}/route",
                 json=imf,

@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     log_level: str = "INFO"         # LOG_LEVEL
     pii_enabled: bool = True        # PII_ENABLED (default true)
+    # Read/write timeout (seconds) for the call to intelligent_router — this
+    # budget covers the ENTIRE downstream chain (Router + cache lookup +
+    # inference dispatch), not just the Router's own processing. CPU-only
+    # Ollama inference can genuinely take 15-20s+ per response even on a
+    # single small model; raised well above the old hardcoded 30s default
+    # after real 502s were observed with two models loaded locally.
+    router_timeout_seconds: float = 120.0   # ROUTER_TIMEOUT_SECONDS
 
     # ── Distributed tracing (opt-in, disabled by default for POC) ──────────
     tracing_enabled: bool = False   # TRACING_ENABLED

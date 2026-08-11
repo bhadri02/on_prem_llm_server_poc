@@ -79,6 +79,39 @@ class TestLookupSemantic:
         assert data["similarity_score"] >= 0.90
 
 
+class TestPromptTextUsesOnlyLastMessage:
+    """Real bug regression: the embedding text (and cache key) must come
+    from the CURRENT turn only, not the whole conversation the Chat UI
+    resends every request. Observed live: a later question falsely hit the
+    semantic cache of an earlier, unrelated reply because both prompts were
+    mostly-identical multi-turn history with only a small differing tail."""
+
+    async def test_lookup_encodes_only_last_message(self, app_client, mock_embedding_generator):
+        history = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "How can I assist you today?"},
+            {"role": "user", "content": "good morning"},
+            {"role": "assistant", "content": "Good morning! How can I help?"},
+            {"role": "user", "content": "do you know the time"},
+        ]
+        await app_client.post("/cache/lookup", json=_imf_body(messages=history))
+
+        mock_embedding_generator.encode.assert_called_once_with("do you know the time")
+
+    async def test_write_encodes_only_last_message(self, app_client, mock_embedding_generator):
+        history = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "How can I assist you today?"},
+            {"role": "user", "content": "good morning"},
+        ]
+        await app_client.post(
+            "/cache/write",
+            json=_imf_body(messages=history, response={"content": "reply", "finish_reason": "stop"}),
+        )
+
+        mock_embedding_generator.encode.assert_called_once_with("good morning")
+
+
 class TestLookupMiss:
     async def test_lookup_miss(self, app_client):
         """Returns hit=false when no exact or semantic match exists."""

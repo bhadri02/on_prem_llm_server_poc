@@ -158,6 +158,7 @@ async def pre_check(
             result.imf,
             state.settings.downstream_router_url,
             request_id,
+            state.settings.router_timeout_seconds,
         )
         metrics.LAYER_METRICS.record_request(
             status="success",

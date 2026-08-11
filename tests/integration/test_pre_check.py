@@ -243,7 +243,7 @@ async def test_pii_masking_forwarded(security_test_app):
     # Capture what was forwarded to the router
     forwarded_imf_capture = {}
 
-    async def _capture_fwd(imf_arg, router_url, request_id):
+    async def _capture_fwd(imf_arg, router_url, request_id, timeout_seconds=None):
         forwarded_imf_capture.update(imf_arg)
         return 200, ROUTER_OK_BODY
 

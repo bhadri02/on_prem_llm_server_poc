@@ -43,27 +43,40 @@ from cache_service.schemas.imf import IMFDocument, IMFResponse
 def make_cache_key(messages: list[dict], model: str, task_type: str) -> str:
     """Return the SHA-256 hex digest that uniquely identifies a cache entry.
 
-    The key is derived by:
-      1. Stripping leading/trailing whitespace from each message's ``content``.
-      2. Joining all stripped content values with a single space.
-      3. Lower-casing the joined string.
-      4. Appending ``|{model}|{task_type}`` to form the raw key material.
-      5. UTF-8–encoding and SHA-256–hashing the raw string.
+    The key is derived from ONLY the *last* message's content — i.e. the
+    current turn actually awaiting a response — not the whole conversation.
+    The Chat UI resends the full accumulated history (including prior
+    assistant replies) on every turn since the backend is stateless
+    per-request; hashing/embedding all of it would make the cache key (and
+    the semantic-cache embedding — see lookup()/write() below) dominated by
+    the ever-growing shared prefix of earlier turns rather than the new
+    question, causing unrelated questions late in a conversation to collide
+    (this was a real bug: "do you know the time" semantically matched a
+    cached "good morning" reply purely because both prompts were mostly
+    identical multi-turn history with only a small differing tail).
 
-    This produces identical keys for any two requests whose messages (after
-    per-message whitespace stripping), model, and task_type are equal —
-    regardless of surrounding whitespace on the full prompt.
+    The key is derived by:
+      1. Taking the last message's ``content`` and stripping whitespace.
+      2. Lower-casing it.
+      3. Appending ``|{model}|{task_type}`` to form the raw key material.
+      4. UTF-8–encoding and SHA-256–hashing the raw string.
+
+    This produces identical keys for any two requests whose current turn
+    (after whitespace stripping), model, and task_type are equal —
+    regardless of prior conversation history or surrounding whitespace.
 
     Args:
         messages:  List of message dicts, each containing at minimum a
                    ``"content"`` key (e.g. ``[{"role": "user", "content": "…"}]``).
+                   Only the last element is used — by protocol, the request
+                   always ends with the current turn awaiting a reply.
         model:     The selected model identifier (``routing.selected_model``).
         task_type: The request task type (``request.task_type``).
 
     Returns:
         64-character lowercase hex string (SHA-256 digest).
     """
-    content = " ".join(m["content"].strip() for m in messages).lower().strip()
+    content = messages[-1]["content"].strip().lower()
     raw = f"{content}|{model}|{task_type}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -119,7 +132,10 @@ async def lookup(imf: IMFDocument, request: Request) -> Any:
         imf.routing.selected_model,
         task_type,
     )
-    prompt_text = " ".join(m.content.strip() for m in imf.request.messages).lower().strip()
+    # Only the current turn (last message) — see make_cache_key()'s docstring
+    # for why joining the whole conversation history is a real bug, not a
+    # style choice.
+    prompt_text = imf.request.messages[-1].content.strip().lower()
 
     # Helper: build miss response
     def _miss_response() -> LookupResponse:
@@ -334,7 +350,10 @@ async def write(imf: IMFDocument, request: Request) -> Any:
         imf.routing.selected_model,
         task_type,
     )
-    prompt_text = " ".join(m.content.strip() for m in imf.request.messages).lower().strip()
+    # Only the current turn (last message) — see make_cache_key()'s docstring
+    # for why joining the whole conversation history is a real bug, not a
+    # style choice.
+    prompt_text = imf.request.messages[-1].content.strip().lower()
 
     # Uniform TTL across every task_type (Req: cache hits only within 1
     # minute, then a miss, regardless of format/task).

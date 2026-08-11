@@ -48,3 +48,39 @@ class TestMakeCacheKey:
         key = make_cache_key(msgs, "model-x", "chat")
         assert len(key) == 64
         assert re.fullmatch(r"[0-9a-f]{64}", key) is not None
+
+    def test_only_last_message_used_not_full_history(self):
+        """Real bug regression: the key must be derived from the CURRENT
+        turn only, not the whole conversation. The Chat UI resends full
+        history every turn (stateless backend) — hashing all of it would
+        make the key dominated by the ever-growing shared prefix instead of
+        the actual new question, causing unrelated questions late in a
+        conversation to collide (observed live: "do you know the time"
+        semantically matched a cached "good morning" reply)."""
+        single_turn = self._msgs("do you know the time")
+        multi_turn_same_question = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "How can I assist you today?"},
+            {"role": "user", "content": "good morning"},
+            {"role": "assistant", "content": "Good morning! How can I help?"},
+            {"role": "user", "content": "do you know the time"},
+        ]
+
+        k_single = make_cache_key(single_turn, "llama3", "chat")
+        k_multi = make_cache_key(multi_turn_same_question, "llama3", "chat")
+
+        assert k_single == k_multi
+
+    def test_different_final_question_different_key_regardless_of_shared_history(self):
+        """Two conversations sharing an identical long history but ending in
+        a different question must NOT collide."""
+        shared_prefix = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "How can I assist you today?"},
+            {"role": "user", "content": "good morning"},
+            {"role": "assistant", "content": "Good morning! How can I help?"},
+        ]
+        convo_a = shared_prefix + [{"role": "user", "content": "do you know the time"}]
+        convo_b = shared_prefix + [{"role": "user", "content": "what is the capital of France"}]
+
+        assert make_cache_key(convo_a, "llama3", "chat") != make_cache_key(convo_b, "llama3", "chat")

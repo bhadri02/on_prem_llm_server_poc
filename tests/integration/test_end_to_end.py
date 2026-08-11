@@ -182,7 +182,7 @@ async def test_pre_check_full_pipeline_smoke(security_test_app):
     # Track what was forwarded to the Router
     captured_fwd_calls = []
 
-    async def _capture_forward(imf_arg, router_url, captured_request_id):
+    async def _capture_forward(imf_arg, router_url, captured_request_id, timeout_seconds=None):
         captured_fwd_calls.append({
             "imf": imf_arg,
             "router_url": router_url,
