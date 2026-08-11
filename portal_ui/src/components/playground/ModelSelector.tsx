@@ -13,14 +13,8 @@ import { useEffect, useRef, useState } from "react";
 import * as portalClient from "../../api/portalClient";
 import { ApiError, ModelRecord } from "../../types";
 
-const DUMMY_MODELS: ModelRecord[] = [
-  { name: "mistral-large-2", version: "2.0.0", backend: "mistral", tasks: ["code"], status: "active" },
-  { name: "gemma-2-27b", version: "2.0.0", backend: "google", tasks: ["summarization"], status: "active" },
-  { name: "qwen-2.5-72b", version: "2.5.0", backend: "alibaba", tasks: ["chat"], status: "active" },
-];
-
 interface ModelSelectorProps {
-  onModelChange: (model: string, actualModel: string) => void;
+  onModelChange: (model: string) => void;
   onLoadError: (hasError: boolean) => void;
   disabled?: boolean;
 }
@@ -31,7 +25,6 @@ export default function ModelSelector({
   disabled = false,
 }: ModelSelectorProps) {
   const [models, setModels] = useState<ModelRecord[]>([]);
-  const [actualModels, setActualModels] = useState<ModelRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string>("");
@@ -51,17 +44,12 @@ export default function ModelSelector({
         if (cancelled) return;
 
         const active = data.models.filter((m) => m.status === "active");
-        setActualModels(active);
+        setModels(active);
 
-        const combined = [...active, ...DUMMY_MODELS];
-        setModels(combined);
-
-        if (combined.length > 0) {
-          const defaultSel = combined[0].name;
+        if (active.length > 0) {
+          const defaultSel = active[0].name;
           setSelected(defaultSel);
-          const isDummy = DUMMY_MODELS.some((d) => d.name === defaultSel);
-          const actual = isDummy ? (active[0]?.name || "") : defaultSel;
-          onModelChange(defaultSel, actual);
+          onModelChange(defaultSel);
         }
       } catch (err) {
         if (cancelled) return;
@@ -95,9 +83,7 @@ export default function ModelSelector({
   function handleSelect(name: string) {
     setSelected(name);
     setOpen(false);
-    const isDummy = DUMMY_MODELS.some((d) => d.name === name);
-    const actual = isDummy ? (actualModels[0]?.name || "") : name;
-    onModelChange(name, actual);
+    onModelChange(name);
   }
 
   return (
@@ -110,13 +96,14 @@ export default function ModelSelector({
         </p>
       ) : (
         <>
-          {/* Hidden native select keeps aria/form semantics */}
-          <input type="hidden" id="model-selector" value={selected} aria-label="Select model" />
-
           <div ref={containerRef} style={{ position: "relative", minWidth: 220 }}>
-            {/* Trigger button */}
+            {/* Trigger button — exposed as an ARIA combobox so it's a real
+                accessible control, not just a styled <div> */}
             <button
               type="button"
+              id="model-selector"
+              role="combobox"
+              aria-label="Select model"
               onClick={() => !loading && !disabled && setOpen((o) => !o)}
               disabled={loading || disabled}
               aria-haspopup="listbox"

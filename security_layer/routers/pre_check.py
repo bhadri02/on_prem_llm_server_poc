@@ -13,7 +13,7 @@ any response (blocked or forwarded) is returned to the caller.
 import datetime
 import time
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 
 from security_layer import metrics
@@ -57,12 +57,11 @@ async def pre_check(
                           audit dispatching.
 
     Returns:
-        A :class:`JSONResponse` relaying the Router's response on success, or
-        an appropriate error response on routing failure.
-
-    Raises:
-        :class:`HTTPException`: With status 400 or 403 when the pipeline
-            blocks the request.
+        A :class:`JSONResponse` relaying the Router's response on success, an
+        appropriate error response on routing failure, or a 400/403 block
+        response (body wrapped under ``"detail"`` to match FastAPI's default
+        HTTPException shape) when the pre-generation pipeline blocks the
+        request.
     """
     # ------------------------------------------------------------------
     # 15.1  Capture handler entry time
@@ -113,6 +112,7 @@ async def pre_check(
         "layer": "security",
         "event_type": "security_block" if result.blocked else "request_received",
         "outcome": "block" if result.blocked else "pass",
+        "error_code": result.block_reason,
         "timestamp_utc": datetime.datetime.utcnow().isoformat() + "Z",
         "latency_ms": result.latency_ms,
         "pii_actions": imf["governance"]["pii_fields_detected"],
@@ -142,12 +142,25 @@ async def pre_check(
             model=_model,
             latency_s=time.monotonic() - t0,
         )
-        raise HTTPException(
+        # Return a JSONResponse (not `raise HTTPException`) so that
+        # `background_tasks` — already populated with the audit-write task
+        # above — actually executes. FastAPI/Starlette only attaches
+        # BackgroundTasks to a normally-returned Response; an HTTPException
+        # is handled by ExceptionMiddleware's own handler, which builds a
+        # fresh Response with no knowledge of this request's BackgroundTasks
+        # instance, silently dropping any tasks already added to it. The
+        # `{"detail": {...}}` wrapping below reproduces FastAPI's default
+        # HTTPException body shape exactly, since callers (api_gateway,
+        # tests) depend on that nesting.
+        return JSONResponse(
             status_code=result.block_status,
-            detail={
-                "error": result.block_reason,
-                "request_id": request_id,
+            content={
+                "detail": {
+                    "error": result.block_reason,
+                    "request_id": request_id,
+                }
             },
+            background=background_tasks,
         )
 
     # ------------------------------------------------------------------

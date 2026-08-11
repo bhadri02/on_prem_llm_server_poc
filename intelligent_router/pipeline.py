@@ -70,6 +70,25 @@ def _ms(t0: float) -> int:
     return int((time.monotonic() - t0) * 1000)
 
 
+def _record_governance_metrics(response: dict, model: str, task_type: str, source: str) -> None:
+    """Record token-usage and served-request governance metrics for a
+    successfully completed request (cache hit or real inference alike).
+
+    Never raises — a missing/malformed usage block just means zero tokens
+    recorded, not a failed request.
+    """
+    metrics.requests_served_total.labels(model=model, task_type=task_type, source=source).inc()
+
+    usage = response.get("usage") or {}
+    prompt_tokens = usage.get("prompt_tokens") or 0
+    completion_tokens = usage.get("completion_tokens") or 0
+
+    if prompt_tokens:
+        metrics.tokens_total.labels(model=model, task_type=task_type, token_type="prompt").inc(prompt_tokens)
+    if completion_tokens:
+        metrics.tokens_total.labels(model=model, task_type=task_type, token_type="completion").inc(completion_tokens)
+
+
 def _utc_now() -> str:
     """Return the current UTC time as an ISO-8601 string ending in 'Z'."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
@@ -87,12 +106,15 @@ def _build_routing_audit(imf: dict, outcome: str, latency_ms: int) -> dict:
         Audit event dict conforming to the routing_decision audit schema.
     """
     event_type = "inference_complete" if outcome == "pass" else "inference_start"
+    usage = (imf.get("response") or {}).get("usage") or {}
     return {
         "request_id": imf.get("request_id"),
         "layer": "router",
         "event_type": event_type,
         "outcome": outcome,
         "model_used": imf.get("routing", {}).get("selected_model"),
+        "prompt_tokens": usage.get("prompt_tokens") or 0,
+        "completion_tokens": usage.get("completion_tokens") or 0,
         "latency_ms": latency_ms,
         "timestamp_utc": _utc_now(),
     }
@@ -166,12 +188,15 @@ def _build_cache_hit_audit(imf: dict, latency_ms: int) -> dict:
     Returns:
         Audit event dict conforming to the cache_hit audit schema.
     """
+    usage = (imf.get("response") or {}).get("usage") or {}
     return {
         "request_id": imf.get("request_id"),
         "layer": "router",
         "event_type": "cache_hit",
         "outcome": "pass",
         "model_used": imf.get("routing", {}).get("selected_model"),
+        "prompt_tokens": usage.get("prompt_tokens") or 0,
+        "completion_tokens": usage.get("completion_tokens") or 0,
         "latency_ms": latency_ms,
         "timestamp_utc": _utc_now(),
     }
@@ -434,6 +459,7 @@ async def run_routing_pipeline(
                         task_type=task_type,
                         model=current_model,
                     ).inc()
+                    _record_governance_metrics(imf["response"], current_model, task_type, source="cache")
                     background_tasks.add_task(
                         post_audit_event,
                         _build_cache_hit_audit(imf, _ms(t0)),
@@ -509,6 +535,7 @@ async def run_routing_pipeline(
             # Merge the response block from the inference result
             if "response" in result_imf:
                 imf["response"] = result_imf["response"]
+            _record_governance_metrics(imf.get("response") or {}, current_model, task_type, source="inference")
 
             # Only write to cache when the lookup was a MISS
             if not imf["cache"].get("lookup_hit"):

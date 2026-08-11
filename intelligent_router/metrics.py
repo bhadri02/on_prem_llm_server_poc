@@ -52,3 +52,27 @@ fallbacks_total = Counter(
     "Total fallback events by task type and reason",
     labelnames=["task_type", "reason"],
 )
+
+# ---------------------------------------------------------------------------
+# AI governance / model-usage metrics
+# ---------------------------------------------------------------------------
+
+# Token consumption — labelled by model, task_type, and token_type
+# (prompt|completion) so both "usage by model" and "usage by task" are
+# queryable from the same series. Incremented once per successfully
+# completed request (cache hit OR real inference), in pipeline.py.
+tokens_total = Counter(
+    "llm_router_tokens_total",
+    "Total LLM tokens consumed, by model, task_type, and token_type (prompt|completion)",
+    labelnames=["model", "task_type", "token_type"],
+)
+
+# Successfully completed requests, split by whether they were served from
+# cache or real inference — a quick governance/usage-reporting signal
+# distinct from the mandatory requests_total{status} (which only tracks
+# success/error, not cache vs. inference).
+requests_served_total = Counter(
+    "llm_router_requests_served_total",
+    "Successfully completed requests by model, task_type, and source (cache|inference)",
+    labelnames=["model", "task_type", "source"],
+)

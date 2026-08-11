@@ -13,14 +13,16 @@ class LayerEnum(str, Enum):
 
 
 class EventTypeEnum(str, Enum):
-    request_received   = "request_received"
-    auth_pass          = "auth_pass"
-    auth_fail          = "auth_fail"
-    security_block     = "security_block"
-    cache_hit          = "cache_hit"
-    inference_start    = "inference_start"
-    inference_complete = "inference_complete"
-    response_sent      = "response_sent"
+    request_received    = "request_received"
+    auth_pass           = "auth_pass"
+    auth_fail           = "auth_fail"
+    security_block      = "security_block"
+    cache_hit           = "cache_hit"
+    inference_start     = "inference_start"
+    inference_complete  = "inference_complete"
+    response_sent       = "response_sent"
+    policy_denied       = "policy_denied"
+    model_not_entitled  = "model_not_entitled"
 
 
 class OutcomeEnum(str, Enum):
@@ -78,3 +80,21 @@ class SummaryResponse(BaseModel):
     total_events: int
     by_outcome:   dict[str, int]
     by_layer:     dict[str, int]
+
+
+class TokenUsage(BaseModel):
+    prompt_tokens:     int
+    completion_tokens: int
+    total_tokens:      int
+
+
+class GovernanceSummaryResponse(BaseModel):
+    total_events:            int
+    by_outcome:              dict[str, int]
+    by_layer:                dict[str, int]
+    requests_blocked_total:  int
+    blocked_by_reason:       dict[str, int]
+    injection_flagged_total: int
+    pii_detections_total:    int
+    token_usage:             TokenUsage
+    model_usage:             dict[str, int]

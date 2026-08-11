@@ -68,6 +68,23 @@ export interface MetricsSummary {
   cache_hit_rate: number | null;
 }
 
+/** Mirrors admin_portal/schemas/governance.py::GovernanceSummary */
+export interface GovernanceSummary {
+  total_events: number;
+  by_outcome: Record<string, number>;
+  by_layer: Record<string, number>;
+  requests_blocked_total: number;
+  blocked_by_reason: Record<string, number>;
+  injection_flagged_total: number;
+  pii_detections_total: number;
+  token_usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+  model_usage: Record<string, number>;
+}
+
 export interface PortalConfig {
   grafana_url: string;
 }

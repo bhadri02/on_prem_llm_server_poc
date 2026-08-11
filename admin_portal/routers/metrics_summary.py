@@ -57,6 +57,16 @@ _QUERY_ERROR_RATE_NUM = "rate(llm_api_gateway_errors_total[60s])"
 _QUERY_CACHE_HITS = 'llm_cache_requests_total{result="hit"}'
 _QUERY_CACHE_TOTAL = "llm_cache_requests_total"
 
+# AI governance / security metrics (Phase 7) — queried best-effort in a
+# separate gather from the core four above; a failure here never turns an
+# otherwise-successful summary into a 502 (same resilience posture as
+# active_users below), it just leaves these fields null.
+_QUERY_BLOCKED_REQUESTS = "sum(rate(llm_security_blocks_total[60s]))"
+_QUERY_POLICY_DENIED = 'sum(rate(llm_router_errors_total{error_code="policy_denied"}[60s]))'
+_QUERY_MODEL_NOT_ENTITLED = 'sum(rate(llm_router_errors_total{error_code="model_not_entitled"}[60s]))'
+_QUERY_PII_DETECTIONS = "sum(rate(llm_security_pii_entities_total[60s]))"
+_QUERY_TOKENS_PER_SECOND = "sum(rate(llm_router_tokens_total[60s]))"
+
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
@@ -174,10 +184,17 @@ async def get_metrics_summary(db: Session = Depends(get_db)) -> Response:
             return Response(content=_502_body, status_code=502, media_type="application/json")
 
     # --- Parse raw Prometheus responses -------------------------------------
-    request_rate_val = _extract_scalar(r_request_rate.json())
-    error_num_val = _extract_scalar(r_error_num.json())
-    cache_hits_val = _sum_results(r_cache_hits.json())
-    cache_total_val = _sum_results(r_cache_total.json())
+    # A 2xx status doesn't guarantee a valid JSON body (e.g. PROMETHEUS_URL
+    # misconfigured to point at a non-Prometheus endpoint) — treat a decode
+    # failure the same as "unreachable" rather than a raw 500.
+    try:
+        request_rate_val = _extract_scalar(r_request_rate.json())
+        error_num_val = _extract_scalar(r_error_num.json())
+        cache_hits_val = _sum_results(r_cache_hits.json())
+        cache_total_val = _sum_results(r_cache_total.json())
+    except ValueError:
+        _record_502(t_start)
+        return Response(content=_502_body, status_code=502, media_type="application/json")
 
     # --- Req 8.1: request_rate (requests/sec) --------------------------------
     request_rate: Optional[float] = request_rate_val  # None if no data
@@ -204,6 +221,29 @@ async def get_metrics_summary(db: Session = Depends(get_db)) -> Response:
     except Exception:
         active_users = None
 
+    # --- AI governance metrics — best-effort, same resilience posture as
+    # active_users above: any failure here (old Prometheus without these
+    # series yet, timeout, etc.) leaves the fields null rather than 502ing
+    # the whole summary. ------------------------------------------------
+    blocked_requests_rate = policy_denied_rate = model_not_entitled_rate = None
+    pii_detections_rate = tokens_per_second = None
+    try:
+        async with httpx.AsyncClient(timeout=_PROMETHEUS_TIMEOUT) as gov_client:
+            r_blocked, r_policy, r_entitled, r_pii, r_tokens = await asyncio.gather(
+                _query(gov_client, prom_base, _QUERY_BLOCKED_REQUESTS),
+                _query(gov_client, prom_base, _QUERY_POLICY_DENIED),
+                _query(gov_client, prom_base, _QUERY_MODEL_NOT_ENTITLED),
+                _query(gov_client, prom_base, _QUERY_PII_DETECTIONS),
+                _query(gov_client, prom_base, _QUERY_TOKENS_PER_SECOND),
+            )
+        blocked_requests_rate = _extract_scalar(r_blocked.json())
+        policy_denied_rate = _extract_scalar(r_policy.json())
+        model_not_entitled_rate = _extract_scalar(r_entitled.json())
+        pii_detections_rate = _extract_scalar(r_pii.json())
+        tokens_per_second = _extract_scalar(r_tokens.json())
+    except Exception:
+        pass
+
     # --- Emit metrics and return --------------------------------------------
     latency = time.monotonic() - t_start
     llm_portal_latency_seconds.labels(endpoint=_ENDPOINT).observe(latency)
@@ -214,6 +254,11 @@ async def get_metrics_summary(db: Session = Depends(get_db)) -> Response:
         error_rate=error_rate,
         cache_hit_rate=cache_hit_rate,
         active_users=active_users,
+        blocked_requests_rate=blocked_requests_rate,
+        policy_denied_rate=policy_denied_rate,
+        model_not_entitled_rate=model_not_entitled_rate,
+        pii_detections_rate=pii_detections_rate,
+        tokens_per_second=tokens_per_second,
     )
     return Response(
         content=summary.model_dump_json(),

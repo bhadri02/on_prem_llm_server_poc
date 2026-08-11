@@ -13,6 +13,7 @@ import {
   ApiKeyWithOwner,
   AuditEventList,
   ChatReq,
+  GovernanceSummary,
   Identity,
   MetricsSummary,
   ModelRecord,
@@ -210,6 +211,24 @@ export async function patchModelApiKey(name: string, apiKey: string): Promise<Mo
 export async function getMetricsSummary(): Promise<MetricsSummary> {
   const res = await fetch("/portal/metrics/summary");
   return handleResponse<MetricsSummary>(res);
+}
+
+/**
+ * GET /portal/governance/summary
+ *
+ * Historical governance/security/usage counts computed from the Audit
+ * Store's real audit trail — always populated, unlike metrics/summary's
+ * live rates which require a reachable Prometheus. Accepts optional
+ * from/to ISO-8601 UTC range params.
+ */
+export async function getGovernanceSummary(params: { from?: string; to?: string } = {}): Promise<GovernanceSummary> {
+  const query = new URLSearchParams();
+  if (params.from !== undefined) query.set("from", toUtcIso(params.from));
+  if (params.to !== undefined) query.set("to", toUtcIso(params.to));
+
+  const qs = query.toString();
+  const res = await fetch(`/portal/governance/summary${qs ? `?${qs}` : ""}`);
+  return handleResponse<GovernanceSummary>(res);
 }
 
 /**

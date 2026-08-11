@@ -365,6 +365,8 @@ def reset_router_prometheus_registry():
         ir_metrics.cache_hits_total,
         ir_metrics.fallbacks_total,
         ir_metrics.errors_total,
+        ir_metrics.tokens_total,
+        ir_metrics.requests_served_total,
     ]
 
     for metric in _metric_objects:

@@ -76,7 +76,6 @@ export default function PlaygroundView() {
   const navigate = useNavigate();
 
   const [selectedModel, setSelectedModel] = useState<string>("");
-  const [actualModel, setActualModel] = useState<string>("");
   const [temperature, setTemperature] = useState<number>(DEFAULT_TEMPERATURE);
   const [chatResponse, setChatResponse] = useState<{
     content: string;
@@ -100,7 +99,7 @@ export default function PlaygroundView() {
 
     try {
       const raw = await portalClient.postChat({
-        model: actualModel || selectedModel,
+        model: selectedModel,
         messages: [{ role: "user", content: message }],
         temperature,
       });
@@ -148,10 +147,7 @@ export default function PlaygroundView() {
         }}
       >
         <ModelSelector
-          onModelChange={(sel, act) => {
-            setSelectedModel(sel);
-            setActualModel(act);
-          }}
+          onModelChange={setSelectedModel}
           onLoadError={setModelLoadError}
           disabled={inFlight}
         />

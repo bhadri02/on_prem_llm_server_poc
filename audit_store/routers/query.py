@@ -25,9 +25,11 @@ from fastapi.responses import JSONResponse
 from audit_store.logging_config import get_logger
 from audit_store.models import (
     AuditEventResponse,
+    GovernanceSummaryResponse,
     LayerEnum,
     OutcomeEnum,
     SummaryResponse,
+    TokenUsage,
     UUID4_RE,
 )
 
@@ -316,6 +318,137 @@ async def get_summary(
         total_events=total_events,
         by_outcome=by_outcome,
         by_layer=by_layer,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /audit/governance/summary
+# ---------------------------------------------------------------------------
+
+@router.get("/audit/governance/summary", response_model=GovernanceSummaryResponse)
+async def get_governance_summary(
+    request: Request,
+    from_: str | None = Query(default=None, alias="from"),
+    to: str | None = Query(default=None),
+):
+    """Return AI governance / security / usage counts computed from the real
+    audit trail — the durable, always-available complement to Prometheus-rate
+    based metrics (which require a live Prometheus server to be useful).
+
+    Aggregates, over the optional ``[from, to]`` window:
+      - ``requests_blocked_total`` / ``blocked_by_reason`` — every row with
+        ``outcome='block'`` (security_layer's injection/content-safety/policy
+        blocks, and intelligent_router's policy_denied/model_not_entitled
+        denials), grouped by ``error_code`` (falling back to ``event_type``
+        for older rows written before ``error_code`` was populated on the
+        security layer's block events).
+      - ``injection_flagged_total`` — the ``injection_detected`` slice of the
+        above (injection scoring is binary in this POC, so flagged and
+        blocked are the same event).
+      - ``pii_detections_total`` — sum of the lengths of every row's
+        ``pii_actions`` JSON array (masked PII entities, request or response
+        side).
+      - ``token_usage`` — sum of ``prompt_tokens``/``completion_tokens``
+        across all rows.
+      - ``model_usage`` — count of successfully served requests
+        (``layer='router'``, ``event_type`` in ``inference_complete`` /
+        ``cache_hit``) grouped by ``model_used``.
+    """
+    _validate_time_range(from_, to)
+
+    conditions: list[str] = []
+    params: list[Any] = []
+    if from_ is not None:
+        conditions.append("timestamp_utc >= ?")
+        params.append(from_)
+    if to is not None:
+        conditions.append("timestamp_utc <= ?")
+        params.append(to)
+
+    where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    conn: sqlite3.Connection = request.app.state.conn
+
+    total_events: int = conn.execute(
+        f"SELECT COUNT(*) FROM audit_events {where_clause}", params
+    ).fetchone()[0]
+
+    by_outcome: dict[str, int] = {
+        row[0]: row[1]
+        for row in conn.execute(
+            f"SELECT outcome, COUNT(*) FROM audit_events {where_clause} GROUP BY outcome",
+            params,
+        ).fetchall()
+        if row[0]
+    }
+    by_layer: dict[str, int] = {
+        row[0]: row[1]
+        for row in conn.execute(
+            f"SELECT layer, COUNT(*) FROM audit_events {where_clause} GROUP BY layer",
+            params,
+        ).fetchall()
+        if row[0]
+    }
+
+    block_conditions = conditions + ["outcome = 'block'"]
+    block_where = "WHERE " + " AND ".join(block_conditions)
+    blocked_by_reason: dict[str, int] = {
+        row[0]: row[1]
+        for row in conn.execute(
+            f"SELECT COALESCE(error_code, event_type), COUNT(*) FROM audit_events "
+            f"{block_where} GROUP BY COALESCE(error_code, event_type)",
+            params,
+        ).fetchall()
+        if row[0]
+    }
+    requests_blocked_total = sum(blocked_by_reason.values())
+    injection_flagged_total = blocked_by_reason.get("injection_detected", 0)
+
+    # Token totals, PII entity counts, and per-model usage all require
+    # per-row inspection (JSON column parsing / event_type+layer filtering)
+    # rather than a single GROUP BY — fetch once and fold in Python. POC
+    # audit-trail scale makes this cheap; revisit if the table grows large.
+    rows = conn.execute(
+        f"SELECT prompt_tokens, completion_tokens, pii_actions, layer, "
+        f"event_type, model_used FROM audit_events {where_clause}",
+        params,
+    ).fetchall()
+
+    prompt_tokens_total = 0
+    completion_tokens_total = 0
+    pii_detections_total = 0
+    model_usage: dict[str, int] = {}
+
+    for row in rows:
+        prompt_tokens_total += row["prompt_tokens"] or 0
+        completion_tokens_total += row["completion_tokens"] or 0
+
+        raw_pii = row["pii_actions"]
+        if raw_pii:
+            try:
+                parsed = json.loads(raw_pii)
+            except (json.JSONDecodeError, TypeError):
+                parsed = None
+            if isinstance(parsed, list):
+                pii_detections_total += len(parsed)
+
+        if row["layer"] == "router" and row["event_type"] in ("inference_complete", "cache_hit") and row["model_used"]:
+            model_usage[row["model_used"]] = model_usage.get(row["model_used"], 0) + 1
+
+    return GovernanceSummaryResponse(
+        total_events=total_events,
+        by_outcome=by_outcome,
+        by_layer=by_layer,
+        requests_blocked_total=requests_blocked_total,
+        blocked_by_reason=blocked_by_reason,
+        injection_flagged_total=injection_flagged_total,
+        pii_detections_total=pii_detections_total,
+        token_usage=TokenUsage(
+            prompt_tokens=prompt_tokens_total,
+            completion_tokens=completion_tokens_total,
+            total_tokens=prompt_tokens_total + completion_tokens_total,
+        ),
+        model_usage=model_usage,
     )
 
 

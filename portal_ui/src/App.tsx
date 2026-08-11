@@ -3,12 +3,11 @@ import { NavLink, Routes, Route, Navigate } from "react-router-dom";
 import ChatView from "./views/ChatView";
 import PlaygroundView from "./views/PlaygroundView";
 import AuditView from "./views/AuditView";
+import GovernanceView from "./views/GovernanceView";
 import ModelView from "./views/ModelView";
 import RbacView from "./views/RbacView";
 import KeysView from "./views/KeysView";
 import RedactionView from "./views/RedactionView";
-import TokenMetricsView from "./views/TokenMetricsView";
-import ActiveUsersView from "./views/ActiveUsersView";
 import ServerDetailsView from "./views/ServerDetailsView";
 import LoginView from "./views/LoginView";
 import * as portalClient from "./api/portalClient";
@@ -84,6 +83,14 @@ export default function App() {
               Audit
             </NavLink>
           )}
+          {isAdmin && (
+            <NavLink
+              to="/governance"
+              className={({ isActive }) => `navbar-link${isActive ? " active" : ""}`}
+            >
+              Governance
+            </NavLink>
+          )}
           <NavLink
             to="/models"
             className={({ isActive }) => `navbar-link${isActive ? " active" : ""}`}
@@ -111,18 +118,6 @@ export default function App() {
             Data Redump
           </NavLink>
           <NavLink
-            to="/token-metrics"
-            className={({ isActive }) => `navbar-link${isActive ? " active" : ""}`}
-          >
-            Token Consumption
-          </NavLink>
-          <NavLink
-            to="/active-users"
-            className={({ isActive }) => `navbar-link${isActive ? " active" : ""}`}
-          >
-            Active Users
-          </NavLink>
-          <NavLink
             to="/server-details"
             className={({ isActive }) => `navbar-link${isActive ? " active" : ""}`}
           >
@@ -144,12 +139,11 @@ export default function App() {
           <Route path="/chat" element={<ChatView />} />
           <Route path="/playground" element={<PlaygroundView />} />
           <Route path="/audit" element={<AuditView />} />
+          <Route path="/governance" element={<GovernanceView />} />
           <Route path="/models" element={<ModelView />} />
           <Route path="/rbac" element={<RbacView />} />
           <Route path="/keys" element={<KeysView />} />
           <Route path="/redaction" element={<RedactionView />} />
-          <Route path="/token-metrics" element={<TokenMetricsView />} />
-          <Route path="/active-users" element={<ActiveUsersView />} />
           <Route path="/server-details" element={<ServerDetailsView />} />
         </Routes>
       </main>

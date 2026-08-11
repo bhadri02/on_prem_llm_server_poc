@@ -49,6 +49,7 @@ from admin_portal.routers import models as models_router_module
 from admin_portal.routers import ollama_admin as ollama_admin_router_module
 from admin_portal.routers import policy as policy_router_module
 from admin_portal.routers import metrics_summary as metrics_summary_router_module
+from admin_portal.routers import governance as governance_router_module
 from admin_portal.routers import keys as keys_router_module
 from admin_portal.routers import users as users_router_module
 from admin_portal.routers import roles as roles_router_module
@@ -166,6 +167,7 @@ def create_app() -> FastAPI:
     app.include_router(ollama_admin_router_module.router, prefix=_portal_prefix)
     app.include_router(policy_router_module.router, prefix=_portal_prefix)
     app.include_router(metrics_summary_router_module.router, prefix=_portal_prefix)
+    app.include_router(governance_router_module.router, prefix=_portal_prefix)
     app.include_router(keys_router_module.router, prefix=_portal_prefix)
     app.include_router(users_router_module.router, prefix=_portal_prefix)
     app.include_router(roles_router_module.router, prefix=_portal_prefix)

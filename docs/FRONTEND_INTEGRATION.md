@@ -194,6 +194,84 @@ documented non-streaming, no-persistence scope.
 
 `GET /portal/metrics/summary` error: `502 {"error": "upstream_unavailable", "upstream": "prometheus"}`.
 
+### 2.1.1 AI Governance & Security panel (Phase 8)
+
+Implemented in `portal_ui` as its own view (`views/GovernanceView.tsx`, nav link
+"Governance", admin-only, route `/governance`) rather than folded into the
+Dashboard tab — the mockup has no equivalent panel, since this data didn't
+exist until this phase.
+
+**Why a separate endpoint from `/portal/metrics/summary`:** that endpoint
+depends on a live Prometheus server for *live per-second rates*, and in the
+default local dev setup (no Prometheus running — see §5.7) it returns `null`
+for every rate field. The data below — how many requests were blocked and
+why, how many tokens have been consumed, which models are actually serving
+traffic — comes straight from the Audit Store's own SQLite audit trail
+instead, computed on demand from real historical events. It's always
+populated whenever the platform has processed any traffic, with no extra
+infrastructure required. Use `/portal/metrics/summary` for live rate/error/
+cache-hit percentages; use this endpoint for durable counts, reasons, and
+totals.
+
+```
+GET /portal/governance/summary
+GET /portal/governance/summary?from=2026-01-01T00:00:00Z&to=2026-02-01T00:00:00Z
+```
+
+Response (`admin_portal/schemas/governance.py::GovernanceSummary`, proxying
+`audit_store`'s `GET /audit/governance/summary`):
+
+```json
+{
+  "total_events": 1204,
+  "by_outcome": {"pass": 1080, "block": 96, "error": 28},
+  "by_layer": {"api_gateway": 0, "security": 602, "router": 602},
+  "requests_blocked_total": 96,
+  "blocked_by_reason": {
+    "injection_detected": 12,
+    "content_safety_violation": 4,
+    "policy_denied": 60,
+    "model_not_entitled": 20
+  },
+  "injection_flagged_total": 12,
+  "pii_detections_total": 37,
+  "token_usage": {
+    "prompt_tokens": 184200,
+    "completion_tokens": 96400,
+    "total_tokens": 280600
+  },
+  "model_usage": {"llama3.2:3b": 410, "qwen2.5:3b": 96}
+}
+```
+
+| Field | Maps to the user's ask | Notes |
+|---|---|---|
+| `requests_blocked_total` / `blocked_by_reason` | "requests rejected/blocked due to unsafe, malicious, or policy-violating prompts" + "guardrail trigger count and rejection reasons" | Reason keys: `injection_detected`, `content_safety_violation` (security_layer, pre-model); `policy_denied`, `model_not_entitled` (intelligent_router, RBAC). `api_gateway`'s own `auth_fail`/`rate_limited` blocks are **not** included — see the gap callout below. |
+| `injection_flagged_total` | "requests flagged for potential prompt injection" | Same event as the `injection_detected` block reason — injection scoring is binary in this POC (§5.8), so flagged and blocked are identical here, not two separate counts. |
+| — (no separate field) | "responses blocked due to security/guardrail violations" | Not a distinct field: `security_layer`'s post-pipeline only ever masks PII in the response, it has no response-blocking capability at all (confirmed in code, not just undocumented) — see §5.9. |
+| `token_usage` | "token consumption and LLM usage statistics" | Summed from real per-request `prompt_tokens`/`completion_tokens` on router audit events (both cache-hit and live-inference paths). |
+| `by_outcome`, `total_events` | "number of failed, rejected, and successfully processed requests" | `by_outcome` keys are `pass`/`block`/`error`/`flag`; there is no single "failed" bucket — `error` (5xx/internal) is distinct from `block` (guardrail/policy denial). |
+| `pii_detections_total` | "any other relevant AI governance/security metric" | Count of masked PII entities (request + response side), summed across all events' `pii_actions` arrays. |
+| `model_usage` | "any other relevant AI governance/security metric" | Successfully-served request counts per model (`inference_complete` + `cache_hit` router events) — a real per-model traffic split, unlike the aspirational task-type breakdown in §5.4. |
+
+**Known gap in this data (intentional-for-now):** `api_gateway`'s own audit
+events (`auth_fail`, `auth_pass`, `rate_limited`, `request_received`,
+`response_sent` — see `api_gateway/services/audit.py`) are written to
+**stdout only**, never POSTed to the Audit Store. This means 401/403 auth
+failures and 429 rate-limit rejections are visible in the gateway's
+container logs but are **not** reflected anywhere in this endpoint's counts
+— only `security_layer` and `intelligent_router` audit events make it into
+the trail this summary reads from. If gateway-layer denial counts are ever
+needed here, `api_gateway` would need to start POSTing to the Audit Store
+the same fire-and-forget way `security_layer`/`intelligent_router` already
+do (see `security_layer/audit_client.py` / `intelligent_router/audit_client.py`
+for the pattern to copy).
+
+`GET /portal/governance/summary` error: `502 {"error": "upstream_unavailable", "upstream": "audit-store"}`.
+A malformed `from`/`to` is relayed through from the Audit Store unchanged as
+`422 {"message": "invalid time parameter(s)", "errors": {...}}` (not
+reshaped into the `ErrorResponse` envelope used elsewhere in this service).
+
 ### 2.2 Users & Roles tab
 
 **All users table / user detail panel:**
@@ -547,6 +625,31 @@ Consequences for the UI:
    `{"error": "policy_denied", ...}` shape, just with a different response
    envelope (`security_layer`'s nests under `"detail"`; the Router's is
    flat) — that's the only client-visible signal separating them today.
+8. **Injection scoring is binary, not graduated (§2.1.1).** `security_layer`'s
+   injection scanner (`security_layer/injection.py`) returns either `1.0`
+   (regex match → block) or `0.0` (no match → pass) — there is no partial
+   score or confidence band. This means "flagged for potential injection"
+   and "blocked for injection" are, today, literally the same event
+   (`injection_detected` in `GET /portal/governance/summary`'s
+   `blocked_by_reason`) — don't design a UI that implies a separate
+   "flagged but not blocked" state exists yet.
+9. **`security_layer`'s post-pipeline cannot block a response, only mask
+   PII in it (§2.1.1).** `security_layer/pipeline.py::run_post_pipeline`
+   has exactly one capability: PII masking on `response.content`. There is
+   no response-side content-safety or injection check, and therefore no
+   "responses blocked due to security/guardrail violations" metric to
+   expose — confirmed by reading the pipeline code, not merely undocumented.
+   If this capability is ever added, it would need its own audit event +
+   `blocked_by_reason` key before it could show up in the governance panel.
+10. **`api_gateway`'s own audit events never reach the Audit Store (§2.1.1).**
+   `api_gateway/services/audit.py::emit_audit_event` only `print()`s to
+   stdout — `auth_fail`, `auth_pass`, `rate_limited`, `request_received`,
+   and `response_sent` are all invisible to `GET /portal/governance/summary`
+   and `GET /portal/audit/events` alike. Only `security_layer` and
+   `intelligent_router` actually POST to the Audit Store today. Any UI count
+   of "401s" or "429s" needs a different data source (stdout log scraping,
+   or a future fix to make `api_gateway` POST like the other two layers) —
+   don't assume the Audit Store is a complete request log across all layers.
 
 ---
 
@@ -558,7 +661,8 @@ Consequences for the UI:
 | GET | `/portal/chat/models` | Entitlement-annotated model list for Chat view |
 | POST | `/portal/chat/completions` | Chat completion via Admin Portal proxy (uses portal's own key) |
 | GET | `/portal/config` | `{grafana_url}` runtime config |
-| GET | `/portal/metrics/summary` | Dashboard KPIs |
+| GET | `/portal/metrics/summary` | Dashboard KPIs (live Prometheus rates; `null` fields with no Prometheus running) |
+| GET | `/portal/governance/summary` | Blocked/reason/injection/PII/token/model-usage counts, from the Audit Store's real trail (§2.1.1) |
 | GET/POST | `/portal/users/` | List / create users |
 | GET/PATCH/DELETE | `/portal/users/{id}` | User detail / status update / deactivate |
 | PATCH | `/portal/users/{id}/roles` | Replace a user's roles |
@@ -590,6 +694,13 @@ backend changes:
   ignoring `entitled: false` rows, until updated.
 - No client code exists yet for `/portal/models` register/api-key,
   `/portal/keys/` (admin-wide), or `/portal/roles/{role}/permissions` PATCH.
+- `views/GovernanceView.tsx` (§2.1.1) **is** wired up to its real endpoint —
+  unlike `TokenMetricsView.tsx`, which remains fully hardcoded demo data
+  (`MODEL_TOKEN_DATA`/`RANGE_DATA` literals) and was left untouched rather
+  than retrofitted, since its per-model bar-chart shape doesn't map cleanly
+  onto the new endpoint's counts. If real per-model token consumption is
+  ever needed there too, `getGovernanceSummary()` (`portalClient.ts`) already
+  returns `token_usage`/`model_usage` — it just isn't wired into that view.
 
 This is a known, intentional gap from this pass (backend-only scope) — not
 an oversight to silently patch.
