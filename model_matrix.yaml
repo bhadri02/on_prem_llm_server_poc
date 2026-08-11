@@ -41,11 +41,18 @@ models:
   # inference_adapter/services/model_backend_resolver.py).
   #
   # Not wired into task_defaults below, so it is reachable only via pinned
-  # routing (request.model = "claude-sonnet-5") or a user's model
+  # routing (request.model = "claude-sonnet-4-5") or a user's model
   # entitlements — auto-routing keeps defaulting to the free local model.
   # health_url is unused for non-ollama backends (see pipeline.py Stage 3 —
   # cloud-backend health checks are skipped, not probed over the network).
-  claude-sonnet-5:
+  #
+  # NOTE: this key must be the literal Anthropic API model ID — it's sent
+  # verbatim as the "model" field to POST /v1/messages
+  # (inference_adapter/services/imf_mapper.py::to_anthropic_request), with
+  # no alias/rename layer. "claude-sonnet-5" was never a real Anthropic
+  # model ID, which is why it always got rejected with a 4xx
+  # (anthropic_request_rejected) and silently fell back to llama3.2:3b.
+  claude-sonnet-4-5:
     backend: anthropic
     endpoint: https://api.anthropic.com
     tasks:

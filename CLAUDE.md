@@ -158,6 +158,8 @@ Full details (capacity requirements, cluster-IP lookup per k3s/kind/minikube, tr
 
 Model catalog seeding (`seed/models.json`) is **not** auto-loaded — the Model Registry starts with an empty `[]` unless the seed file is manually copied onto its PVC before/after first deploy (see `seed/README.md`).
 
+**Known gap, not fixed: these Helm charts are stale relative to the current application code.** They predate the RBAC/Postgres/policy-matrix/governance work documented elsewhere in this file — e.g. `router`'s chart has `env: {}` (none of its now-required settings like `MODEL_MATRIX_PATH`, `ADMIN_PORTAL_INTERNAL_KEY`, `POLICY_MATRIX_PATH` are wired), `admin-portal`'s chart has no `DATABASE_URL`/`ADMIN_PORTAL_INTERNAL_KEY` at all, there is no Postgres dependency anywhere in the chart tree (only `cache`'s bundled Redis), and there is no `portal_ui` chart despite it having a working `Dockerfile` — the `admin-portal` chart's Ingress claims `llm-portal.local` for itself (the raw API, no UI). Deploying via `./scripts/deploy.sh` today would crash-loop most pods on missing config. **`docs/DEPLOYMENT.md`** documents a Docker Compose path (`docker-compose.prod.yml`) instead, built and verified against the current code — use that for a real on-prem deployment until these charts are brought back in sync.
+
 ## Conventions to preserve when editing a service
 
 - Middleware order matters and is documented in each service's `main.py` docstring (e.g. api_gateway: `PrometheusMiddleware → LoggingMiddleware → AuthMiddleware → RateLimitMiddleware → Router`, registered in *reverse* of that order because Starlette wraps last-added-outermost).

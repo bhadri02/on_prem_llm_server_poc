@@ -114,7 +114,7 @@ async def login(body: LoginRequest, response: Response, db: DBSession = Depends(
     )
 
 
-@router.post("/logout", status_code=204)
+@router.post("/logout", status_code=204, response_model=None)
 async def logout(request: Request, response: Response, db: DBSession = Depends(get_db)) -> None:
     token = request.cookies.get(settings.SESSION_COOKIE_NAME)
     if token:

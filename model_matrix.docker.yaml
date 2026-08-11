@@ -1,0 +1,60 @@
+# model_matrix.docker.yaml
+#
+# Docker-only variant of model_matrix.yaml. Identical except health_url and
+# endpoint point at the "ollama" service hostname instead of "localhost" —
+# in docker-compose.prod.yml, Ollama runs in its own container, so "router"'s
+# own "localhost" doesn't reach it (this broke Stage 3's health check with
+# a real 503/all_backends_exhausted in Docker: router thought Ollama was
+# unreachable, exhausted its fallback chain, and failed the request even
+# though Ollama itself was healthy and had the model loaded).
+#
+# Bind-mounted over /app/model_matrix.yaml for the "router" service only
+# (see docker-compose.prod.yml) — model_matrix.yaml itself (used by
+# run-local.ps1's native, same-host deployment) is untouched.
+#
+# Keep this in sync with model_matrix.yaml for anything other than
+# localhost -> ollama hostname swaps (models, tasks, task_defaults).
+
+models:
+  llama3.2:3b:
+    backend: ollama
+    endpoint: http://ollama:11434
+    tasks:
+      - chat
+      - code
+      - reasoning
+      - summarization
+      - translation
+    health_url: http://ollama:11434/api/tags
+    fallback: null
+
+  qwen2.5:3b:
+    backend: ollama
+    endpoint: http://ollama:11434
+    tasks:
+      - chat
+      - code
+      - reasoning
+      - summarization
+      - translation
+    health_url: http://ollama:11434/api/tags
+    fallback: llama3.2:3b
+
+  claude-sonnet-4-5:
+    backend: anthropic
+    endpoint: https://api.anthropic.com
+    tasks:
+      - chat
+      - code
+      - reasoning
+      - summarization
+      - translation
+    health_url: https://api.anthropic.com/v1/models
+    fallback: llama3.2:3b
+
+task_defaults:
+  chat: "llama3.2:3b"
+  code: "qwen2.5:3b"
+  reasoning: "qwen2.5:3b"
+  summarization: "llama3.2:3b"
+  translation: "llama3.2:3b"

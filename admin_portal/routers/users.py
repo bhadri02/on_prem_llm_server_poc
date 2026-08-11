@@ -190,7 +190,7 @@ async def replace_user_roles(
     return _to_user_out(db, user)
 
 
-@router.delete("/users/{user_id}", status_code=204)
+@router.delete("/users/{user_id}", status_code=204, response_model=None)
 async def deactivate_user(user_id: str, db: Session = Depends(get_db)) -> None:
     user = _get_user_or_404(db, user_id)
     user.status = "inactive"
