@@ -31,7 +31,11 @@ if TYPE_CHECKING:
     from api_gateway.services.key_resolver import KeyProfile
 
 
-def build_imf(payload: OpenAIChatRequest, user_profile: "KeyProfile | None" = None) -> IMFDocument:
+def build_imf(
+    payload: OpenAIChatRequest,
+    user_profile: "KeyProfile | None" = None,
+    request_id: str | None = None,
+) -> IMFDocument:
     """Normalize an OpenAI-compatible chat request into an IMFDocument.
 
     Args:
@@ -41,11 +45,18 @@ def build_imf(payload: OpenAIChatRequest, user_profile: "KeyProfile | None" = No
             ``None`` only in contexts that bypass auth entirely (e.g. direct
             unit tests of the normalizer) — falls back to the previous
             hardcoded POC identity so those callers keep working.
+        request_id: The id already generated for this request by
+            LoggingMiddleware (``request.state.request_id``) — reused here
+            so this IMF's id matches the one AuthMiddleware/RateLimitMiddleware
+            already used for their own audit events, instead of minting a
+            second, uncorrelated id for the same request. Falls back to a
+            fresh UUID for callers with no request context (e.g. direct
+            unit tests of the normalizer).
 
     Returns:
         A fully populated IMFDocument ready for downstream processing.
     """
-    request_id = str(uuid.uuid4())
+    request_id = request_id or str(uuid.uuid4())
 
     # Map OpenAI messages → IMF messages, preserving order, role, and content
     imf_messages = [

@@ -161,6 +161,14 @@ class TestOutcomeEnum:
         event = AuditEventCreate(**make_event(outcome="flag"))
         assert event.outcome == OutcomeEnum.flag
 
+    def test_error_value_accepted(self):
+        """api_gateway's own AuditEvent.outcome allows "error" (its 502
+        DownstreamError case) — added alongside rate_limited so those events
+        don't hit the same silent-rejection bug documented for
+        policy_denied/model_not_entitled."""
+        event = AuditEventCreate(**make_event(outcome="error"))
+        assert event.outcome == OutcomeEnum.error
+
     def test_invalid_outcome_rejected(self):
         with pytest.raises(ValidationError) as exc_info:
             AuditEventCreate(**make_event(outcome="unknown"))

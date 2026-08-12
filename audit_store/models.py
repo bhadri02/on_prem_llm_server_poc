@@ -23,12 +23,14 @@ class EventTypeEnum(str, Enum):
     response_sent       = "response_sent"
     policy_denied       = "policy_denied"
     model_not_entitled  = "model_not_entitled"
+    rate_limited        = "rate_limited"
 
 
 class OutcomeEnum(str, Enum):
     pass_  = "pass"
     block  = "block"
     flag   = "flag"
+    error  = "error"
 
 
 UUID4_RE = re.compile(

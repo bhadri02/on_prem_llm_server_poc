@@ -306,6 +306,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      audit-store:
+        condition: service_healthy
     environment:
       LOG_LEVEL: INFO
       GATEWAY_API_KEY: ${GATEWAY_API_KEY}
@@ -316,6 +318,8 @@ services:
       KEY_CACHE_TTL_SECONDS: "30"
       REDIS_URL: "redis://redis:6379"
       RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
+      AUDIT_STORE_URL: "http://audit-store:9200"
+      AUDIT_API_KEY: ${AUDIT_API_KEY}
     ports:
       # Published directly so /v1/chat/completions is reachable without going
       # through the portal-ui front door too, if you want a dedicated API port.

@@ -84,3 +84,40 @@ class TestMakeCacheKey:
         convo_b = shared_prefix + [{"role": "user", "content": "what is the capital of France"}]
 
         assert make_cache_key(convo_a, "llama3", "chat") != make_cache_key(convo_b, "llama3", "chat")
+
+    def test_trailing_harness_wrapper_message_ignored(self):
+        """Real bug regression: GitHub Copilot Chat's agent-mode harness
+        appends a near-constant <context>/<reminderinstructions> block as
+        the LAST message on every turn — treating that as "the current
+        turn" collided completely different questions into the same key
+        (observed live: "tell me a joke" and "what time is it" produced a
+        0.98 semantic similarity purely because of this shared trailing
+        wrapper). The real question — the last non-wrapper message — must
+        be what determines the key.
+        """
+        wrapper = (
+            "<context>\nthe current date is 2026-08-12.\n</context>\n"
+            "<reminderinstructions>\nwhen using the insert_edit_into_file "
+            "tool, avoid repeating existing code.\n</reminderinstructions>"
+        )
+        convo_joke = [
+            {"role": "user", "content": "tell me a joke"},
+            {"role": "user", "content": wrapper},
+        ]
+        convo_time = [
+            {"role": "user", "content": "what time is it"},
+            {"role": "user", "content": wrapper},
+        ]
+
+        assert make_cache_key(convo_joke, "llama3", "chat") != make_cache_key(convo_time, "llama3", "chat")
+
+    def test_all_messages_look_like_wrappers_falls_back_to_last(self):
+        """Edge case: if every message happens to look like a wrapper, fall
+        back to the true last message rather than returning nothing."""
+        msgs = [
+            {"role": "user", "content": "<context>\nonly wrapper content\n</context>"},
+        ]
+        # Should not raise, and should be internally consistent.
+        k1 = make_cache_key(msgs, "llama3", "chat")
+        k2 = make_cache_key(msgs, "llama3", "chat")
+        assert k1 == k2

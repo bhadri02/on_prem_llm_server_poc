@@ -6,9 +6,15 @@ Delegates all logging to the shared observability module
 to stdout conforming to the mandatory Log_Schema.
 
 request_id derivation:
-    Extracted from the ``X-Request-ID`` header; falls back to ``"none"``
-    when the header is absent.  The value is also stored on ``request.state``
-    for downstream handlers (e.g. the exception handler in main.py).
+    Extracted from the ``X-Request-ID`` header; falls back to a freshly
+    generated UUID-v4 when the header is absent (virtually always, for real
+    clients — a literal "none" fallback here used to mean AuthMiddleware's
+    and RateLimitMiddleware's own audit events never correlated with the
+    same request's request_received/response_sent events downstream, and
+    "none" isn't a valid request_id for the Audit Store's UUID-v4
+    validator either). The value is stored on ``request.state`` for
+    downstream handlers (e.g. the exception handler in main.py, and
+    build_imf() — see normalizer.py) to reuse rather than generate their own.
 
 Sensitive data safety:
     - ``request.body()`` is NEVER called or read.
@@ -28,6 +34,7 @@ Validates: Requirements 6.1–6.6, 7.1–7.4
 from __future__ import annotations
 
 import traceback as tb_module
+import uuid
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -45,7 +52,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
     structured log entries.
 
     Safe fields logged per request:
-        request_id  — from ``X-Request-ID`` header (or ``"none"``)
+        request_id  — from ``X-Request-ID`` header (or a generated UUID-v4)
         method      — HTTP method
         path        — URL path (not query string)
         status_code — integer HTTP response status code
@@ -58,8 +65,9 @@ class LoggingMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
         # Extract request_id from the dedicated header only (Req 7.3 — no other
-        # header values are read for logging purposes).
-        request_id: str = request.headers.get("X-Request-ID", "none")
+        # header values are read for logging purposes); generate one if absent
+        # so every request has a real, correlatable, Audit-Store-valid id.
+        request_id: str = request.headers.get("X-Request-ID") or str(uuid.uuid4())
 
         # Propagate request_id to request.state so downstream handlers can use it.
         request.state.request_id = request_id

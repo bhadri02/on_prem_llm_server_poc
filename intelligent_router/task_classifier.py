@@ -26,6 +26,21 @@ logger = get_logger(__name__)
 # Fixed evaluation order: higher-priority task types are checked first.
 PRIORITY_ORDER = ["code", "reasoning", "summarization", "translation", "chat"]
 
+# Some clients' agent-mode harnesses (confirmed: GitHub Copilot Chat's native
+# "Bring Your Own Model" integration) append a near-constant tool/context
+# reminder block to every request — e.g. "<context>\nthe current date is
+# ...\n</context>\n<reminderinstructions>\nwhen using the
+# insert_edit_into_file tool, ...". That block is full of code-editing
+# language, so classify_task's substring match against "code" (first in
+# PRIORITY_ORDER) fires on every single request from this client regardless
+# of what was actually asked — confirmed: a plain "tell me a joke" was
+# classified as task_type="code" solely because of this wrapper text.
+# Excluded from the classification text entirely, the same way
+# cache_service's make_cache_key() excludes it from the cache key/embedding
+# (see cache_service/routers/cache.py::_find_current_turn_content, the same
+# bug in a different service).
+_HARNESS_WRAPPER_PREFIXES = ("<context>", "<reminderinstructions>")
+
 
 @dataclass
 class ClassifierRules:
@@ -85,6 +100,11 @@ def classify_task(messages: list[dict], rules: ClassifierRules) -> str:
     Algorithm:
       1. Concatenate the ``content`` field of every message with a single
          space separator; ``None`` content is treated as an empty string.
+         Messages that start with a known harness-wrapper tag (see
+         ``_HARNESS_WRAPPER_PREFIXES``) are excluded entirely — they're
+         injected tool/context boilerplate, not something the user or
+         assistant actually said, and would otherwise dominate the
+         classification for clients that inject them on every turn.
       2. Convert the concatenated text to lowercase.
       3. Evaluate each task type in ``PRIORITY_ORDER`` in order; for each type,
          check whether any of its configured keywords appears as a
@@ -100,7 +120,11 @@ def classify_task(messages: list[dict], rules: ClassifierRules) -> str:
     Returns:
         The matched task type string, or ``rules.default`` on no match.
     """
-    text = " ".join(m.get("content") or "" for m in messages).lower()
+    text = " ".join(
+        (m.get("content") or "")
+        for m in messages
+        if not (m.get("content") or "").strip().lower().startswith(_HARNESS_WRAPPER_PREFIXES)
+    ).lower()
     for task_type in PRIORITY_ORDER:
         keywords = rules.rules.get(task_type, [])
         if any(kw.lower() in text for kw in keywords):

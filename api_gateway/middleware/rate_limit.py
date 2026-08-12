@@ -29,6 +29,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from api_gateway.config import get_settings
 from api_gateway.services.audit import build_audit_event, emit_audit_event
+from api_gateway.services.audit_client import schedule_audit_post
 from shared.observability.logging import emit, get_logger
 
 _ERROR_429 = {"error": {"code": "429", "message": "Rate limit exceeded"}}
@@ -103,22 +104,23 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if count > user_profile.rate_limit_override:
-            emit_audit_event(
-                build_audit_event(
-                    request_id=request_id,
-                    user_id="poc-user",
-                    event_type="rate_limited",
-                    method=request.method,
-                    path=request.url.path,
-                    status_code=429,
-                    outcome="block",
-                )
+            event = build_audit_event(
+                request_id=request_id,
+                user_id="poc-user",
+                event_type="rate_limited",
+                method=request.method,
+                path=request.url.path,
+                status_code=429,
+                outcome="block",
             )
+            emit_audit_event(event)
 
-            return JSONResponse(
+            response = JSONResponse(
                 status_code=429,
                 content=_ERROR_429,
                 headers={"Retry-After": str(window_seconds)},
             )
+            schedule_audit_post(response, event, request.app.state.http_client)
+            return response
 
         return await call_next(request)

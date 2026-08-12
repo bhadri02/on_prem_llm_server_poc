@@ -15,8 +15,8 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from api_gateway.schemas.audit import AuditEvent
 from api_gateway.services.audit import build_audit_event, emit_audit_event
+from api_gateway.services.audit_client import schedule_audit_post
 from api_gateway.services.key_resolver import KeyResolverUnavailable, resolve_key
 
 _UNAUTHORIZED_RESPONSE = {"error": {"code": "401", "message": "Unauthorized"}}
@@ -64,6 +64,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # Resolve request_id — prefer one already set on request state
         request_id: str = getattr(request.state, "request_id", None) or str(uuid.uuid4())
 
+        http_client = request.app.state.http_client
+
         key = request.headers.get("X-Api-Key", "")
         if not key:
             auth_header = request.headers.get("Authorization", "")
@@ -71,80 +73,84 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 key = auth_header[len("Bearer "):].strip()
 
         if not key:
-            emit_audit_event(
-                build_audit_event(
-                    request_id=request_id,
-                    event_type="auth_fail",
-                    method=request.method,
-                    path=request.url.path,
-                    status_code=401,
-                    outcome="block",
-                    reason="missing_header",
-                )
+            event = build_audit_event(
+                request_id=request_id,
+                event_type="auth_fail",
+                method=request.method,
+                path=request.url.path,
+                status_code=401,
+                outcome="block",
+                reason="missing_header",
             )
-            return JSONResponse(status_code=401, content=_UNAUTHORIZED_RESPONSE)
+            emit_audit_event(event)
+            response = JSONResponse(status_code=401, content=_UNAUTHORIZED_RESPONSE)
+            schedule_audit_post(response, event, http_client)
+            return response
 
-        http_client = request.app.state.http_client
         try:
             profile = await resolve_key(key, http_client)
         except KeyResolverUnavailable:
-            emit_audit_event(
-                build_audit_event(
-                    request_id=request_id,
-                    event_type="auth_fail",
-                    method=request.method,
-                    path=request.url.path,
-                    status_code=503,
-                    outcome="block",
-                    reason="identity_service_unavailable",
-                )
+            event = build_audit_event(
+                request_id=request_id,
+                event_type="auth_fail",
+                method=request.method,
+                path=request.url.path,
+                status_code=503,
+                outcome="block",
+                reason="identity_service_unavailable",
             )
-            return JSONResponse(status_code=503, content=_IDENTITY_UNAVAILABLE_RESPONSE)
+            emit_audit_event(event)
+            response = JSONResponse(status_code=503, content=_IDENTITY_UNAVAILABLE_RESPONSE)
+            schedule_audit_post(response, event, http_client)
+            return response
 
         if profile is None:
-            emit_audit_event(
-                build_audit_event(
-                    request_id=request_id,
-                    event_type="auth_fail",
-                    method=request.method,
-                    path=request.url.path,
-                    status_code=401,
-                    outcome="block",
-                    reason="key_not_found",
-                )
+            event = build_audit_event(
+                request_id=request_id,
+                event_type="auth_fail",
+                method=request.method,
+                path=request.url.path,
+                status_code=401,
+                outcome="block",
+                reason="key_not_found",
             )
-            return JSONResponse(status_code=401, content=_UNAUTHORIZED_RESPONSE)
+            emit_audit_event(event)
+            response = JSONResponse(status_code=401, content=_UNAUTHORIZED_RESPONSE)
+            schedule_audit_post(response, event, http_client)
+            return response
 
         if not profile.roles:
-            emit_audit_event(
-                build_audit_event(
-                    request_id=request_id,
-                    user_id=profile.user_id,
-                    event_type="auth_fail",
-                    method=request.method,
-                    path=request.url.path,
-                    status_code=403,
-                    outcome="block",
-                    reason="no_active_roles",
-                )
+            event = build_audit_event(
+                request_id=request_id,
+                user_id=profile.user_id,
+                event_type="auth_fail",
+                method=request.method,
+                path=request.url.path,
+                status_code=403,
+                outcome="block",
+                reason="no_active_roles",
             )
-            return JSONResponse(status_code=403, content=_FORBIDDEN_RESPONSE)
+            emit_audit_event(event)
+            response = JSONResponse(status_code=403, content=_FORBIDDEN_RESPONSE)
+            schedule_audit_post(response, event, http_client)
+            return response
 
         # Key resolved to an active identity with at least one role — record
         # pass and continue.
-        emit_audit_event(
-            build_audit_event(
-                request_id=request_id,
-                user_id=profile.user_id,
-                event_type="auth_pass",
-                method=request.method,
-                path=request.url.path,
-                outcome="pass",
-            )
+        pass_event = build_audit_event(
+            request_id=request_id,
+            user_id=profile.user_id,
+            event_type="auth_pass",
+            method=request.method,
+            path=request.url.path,
+            outcome="pass",
         )
+        emit_audit_event(pass_event)
 
         # Propagate resolved request_id and identity to downstream handlers
         request.state.request_id = request_id
         request.state.user_profile = profile
 
-        return await call_next(request)
+        response = await call_next(request)
+        schedule_audit_post(response, pass_event, http_client)
+        return response

@@ -37,12 +37,15 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from api_gateway.config import get_settings
+from api_gateway.schemas.audit import AuditEvent
 from api_gateway.schemas.openai import OpenAIChatRequest
 from api_gateway.services.audit import build_audit_event, emit_audit_event
+from api_gateway.services.audit_client import post_audit_event
 from api_gateway.services.downstream import DownstreamError, forward_to_security
 from api_gateway.services.normalizer import build_imf
 from api_gateway.services.serializer import serialize_response
@@ -54,6 +57,25 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 _ERROR_400: dict[str, Any] = {"error": {"code": "400", "message": "Bad request"}}
 _ERROR_502: dict[str, Any] = {"error": {"code": "502", "message": "Bad gateway"}}
+
+
+def _dispatch_audit_event(
+    background_tasks: BackgroundTasks,
+    client: httpx.AsyncClient,
+    event: AuditEvent,
+) -> None:
+    """Emit *event* to stdout immediately and schedule a durable Audit Store
+    write as a background task (runs after the response is sent — never
+    delays the caller)."""
+    emit_audit_event(event)
+    settings = get_settings()
+    background_tasks.add_task(
+        post_audit_event,
+        event,
+        settings.audit_store_url,
+        client,
+        settings.audit_api_key,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +148,7 @@ async def sse_single_chunk(response_body: dict) -> AsyncGenerator[bytes, None]:
 async def chat_completions(
     payload: OpenAIChatRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
 ) -> JSONResponse | StreamingResponse:
     """Handle POST /v1/chat/completions.
 
@@ -137,6 +160,8 @@ async def chat_completions(
         payload: Validated request body.
         request: Raw Starlette request (used to access ``app.state.http_client``
                  and to resolve the request path/method for audit events).
+        background_tasks: FastAPI BackgroundTasks — used to POST each audit
+                 event to the Audit Store without delaying the response.
 
     Returns:
         - Non-streaming: :class:`JSONResponse` (200 on success, 502 on error).
@@ -154,16 +179,20 @@ async def chat_completions(
     # Step 1 — Normalize payload into IMF
     # ------------------------------------------------------------------
     user_profile = getattr(request.state, "user_profile", None)
-    imf = build_imf(payload, user_profile)
+    # Reuse the id LoggingMiddleware already generated for this request
+    # (request.state.request_id) rather than minting a second, uncorrelated
+    # one — AuthMiddleware/RateLimitMiddleware's own audit events for this
+    # same request already used it.
+    request_id = getattr(request.state, "request_id", None)
+    imf = build_imf(payload, user_profile, request_id=request_id)
     request_id = imf.request_id
-
-    # Propagate request_id to request state so middleware can correlate logs
-    request.state.request_id = request_id
 
     # ------------------------------------------------------------------
     # Step 2 — Emit request_received audit event
     # ------------------------------------------------------------------
-    emit_audit_event(
+    _dispatch_audit_event(
+        background_tasks,
+        client,
         build_audit_event(
             request_id=request_id,
             user_id="poc-user",
@@ -171,7 +200,7 @@ async def chat_completions(
             method=method,
             path=path,
             outcome="pass",
-        )
+        ),
     )
 
     # ------------------------------------------------------------------
@@ -185,7 +214,9 @@ async def chat_completions(
     except DownstreamError as exc:
         # Relay security blocks (400/403) directly; wrap true gateway errors as 502
         if exc.status_code in (400, 403, 429):
-            emit_audit_event(
+            _dispatch_audit_event(
+                background_tasks,
+                client,
                 build_audit_event(
                     request_id=request_id,
                     event_type="response_sent",
@@ -194,10 +225,12 @@ async def chat_completions(
                     status_code=exc.status_code,
                     latency_ms=(time.monotonic() - start_time) * 1000,
                     outcome="block",
-                )
+                ),
             )
             return JSONResponse(status_code=exc.status_code, content=exc.body)
-        emit_audit_event(
+        _dispatch_audit_event(
+            background_tasks,
+            client,
             build_audit_event(
                 request_id=request_id,
                 event_type="response_sent",
@@ -206,13 +239,15 @@ async def chat_completions(
                 status_code=502,
                 latency_ms=(time.monotonic() - start_time) * 1000,
                 outcome="error",
-            )
+            ),
         )
         return JSONResponse(status_code=502, content=_ERROR_502)
 
     response_body = serialize_response(imf_response)
 
-    emit_audit_event(
+    _dispatch_audit_event(
+        background_tasks,
+        client,
         build_audit_event(
             request_id=request_id,
             user_id="poc-user",
@@ -222,7 +257,7 @@ async def chat_completions(
             status_code=200,
             latency_ms=(time.monotonic() - start_time) * 1000,
             outcome="pass",
-        )
+        ),
     )
 
     if payload.stream:

@@ -28,7 +28,7 @@ Intelligent Router fixtures:
 
 import re
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -38,6 +38,37 @@ from model_registry.main import app, lifespan
 
 # anyio backend registration (required by pytest-anyio / anyio pytest plugin)
 pytest_plugins = ("anyio",)
+
+
+@pytest.fixture(autouse=True)
+def mock_api_gateway_audit_post():
+    """Prevent any test from attempting a real network call to the Audit Store.
+
+    api_gateway/middleware/auth.py, middleware/rate_limit.py, and
+    routers/chat.py all schedule api_gateway.services.audit_client.
+    post_audit_event() as a background task on every request (see
+    CLAUDE.md's "api_gateway audit gap" note). Left unmocked, any test that
+    exercises the full app via TestClient would have every request block on
+    a real (failing) connection attempt to the default audit_store_url until
+    AUDIT_TIMEOUT (2.0s) elapses — this was observed adding tens of seconds
+    to the api_gateway test suite before this fixture was added.
+
+    Two patch targets are required: routers/chat.py imports post_audit_event
+    directly (`from ... import post_audit_event`), which binds its own name
+    in chat.py's namespace independent of audit_client's; middleware/auth.py
+    and middleware/rate_limit.py instead call it indirectly via
+    audit_client.schedule_audit_post(), so patching audit_client's own
+    module-level name is what intercepts those.
+
+    Autouse and global (this is the root conftest.py) rather than scoped to
+    api_gateway's own test directories, since these patches are inert no-ops
+    for any test that never imports api_gateway modules at all.
+    """
+    with (
+        patch("api_gateway.services.audit_client.post_audit_event", new=AsyncMock()),
+        patch("api_gateway.routers.chat.post_audit_event", new=AsyncMock()),
+    ):
+        yield
 
 # ===========================================================================
 # Intelligent Router test helpers (shared across property tests)

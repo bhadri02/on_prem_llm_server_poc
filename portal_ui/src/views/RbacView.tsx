@@ -14,8 +14,11 @@
  *
  * Clicking "Keys" on a user row expands an inline panel for API key
  * management against /portal/users/{id}/keys/* — generate (raw key shown
- * once), revoke, and edit model entitlements via a checklist populated from
- * GET /portal/models.
+ * once, with an optional rate limit; defaults to 60 req/min if left blank),
+ * revoke, edit model entitlements via a checklist populated from
+ * GET /portal/models, and edit an existing key's rate limit inline (every
+ * key has its own concrete requests/min limit — there is no platform-wide
+ * fallback, see api_gateway/middleware/rate_limit.py).
  */
 
 import { Fragment, useEffect, useState } from "react";
@@ -76,8 +79,14 @@ export default function RbacView() {
   const [keyError, setKeyError] = useState<string | null>(null);
   const [newKeyLabel, setNewKeyLabel] = useState("");
   const [newKeyEntitlements, setNewKeyEntitlements] = useState<string[]>([]);
+  const [newKeyRateLimit, setNewKeyRateLimit] = useState("");
   const [creatingKey, setCreatingKey] = useState(false);
   const [justCreatedKey, setJustCreatedKey] = useState<{ userId: string; rawKey: string } | null>(null);
+
+  // Per-key rate-limit inline edit — keyed by key_id. Holds the input's
+  // current (possibly unsaved) text while the user is editing.
+  const [rateLimitDrafts, setRateLimitDrafts] = useState<Record<string, string>>({});
+  const [savingRateLimitKeyId, setSavingRateLimitKeyId] = useState<string | null>(null);
 
   // ---------------------------------------------------------------------
   // Initial load
@@ -217,6 +226,7 @@ export default function RbacView() {
     setJustCreatedKey(null);
     setNewKeyLabel("");
     setNewKeyEntitlements([]);
+    setNewKeyRateLimit("");
 
     if (!keysByUser[userId]) {
       setKeysLoading(true);
@@ -234,15 +244,23 @@ export default function RbacView() {
   async function handleCreateKey(userId: string) {
     setCreatingKey(true);
     setKeyError(null);
+    const trimmedRateLimit = newKeyRateLimit.trim();
+    if (trimmedRateLimit && (!/^\d+$/.test(trimmedRateLimit) || Number(trimmedRateLimit) <= 0)) {
+      setKeyError("Rate limit must be a positive whole number.");
+      setCreatingKey(false);
+      return;
+    }
     try {
       const created = await portalClient.createApiKey(userId, {
         label: newKeyLabel.trim() || undefined,
         model_entitlements: newKeyEntitlements,
+        rate_limit_rpm: trimmedRateLimit ? Number(trimmedRateLimit) : undefined,
       });
       setKeysByUser((prev) => ({ ...prev, [userId]: [...(prev[userId] ?? []), created] }));
       setJustCreatedKey({ userId, rawKey: created.raw_key });
       setNewKeyLabel("");
       setNewKeyEntitlements([]);
+      setNewKeyRateLimit("");
     } catch (err) {
       setKeyError(errMessage(err));
     } finally {
@@ -260,6 +278,32 @@ export default function RbacView() {
       }));
     } catch (err) {
       setKeyError(errMessage(err));
+    }
+  }
+
+  async function handlePatchRateLimit(userId: string, keyId: string) {
+    const draft = (rateLimitDrafts[keyId] ?? "").trim();
+    if (!/^\d+$/.test(draft) || Number(draft) <= 0) {
+      setKeyError("Rate limit must be a positive whole number.");
+      return;
+    }
+    setKeyError(null);
+    setSavingRateLimitKeyId(keyId);
+    try {
+      const updated = await portalClient.patchKeyRateLimit(userId, keyId, Number(draft));
+      setKeysByUser((prev) => ({
+        ...prev,
+        [userId]: (prev[userId] ?? []).map((k) => (k.key_id === keyId ? updated : k)),
+      }));
+      setRateLimitDrafts((prev) => {
+        const next = { ...prev };
+        delete next[keyId];
+        return next;
+      });
+    } catch (err) {
+      setKeyError(errMessage(err));
+    } finally {
+      setSavingRateLimitKeyId(null);
     }
   }
 
@@ -715,45 +759,82 @@ export default function RbacView() {
                                       <th style={{ padding: "6px 8px", fontSize: 10.5 }}>Key</th>
                                       <th style={{ padding: "6px 8px", fontSize: 10.5 }}>Status</th>
                                       <th style={{ padding: "6px 8px", fontSize: 10.5 }}>Entitlements</th>
+                                      <th style={{ padding: "6px 8px", fontSize: 10.5 }}>Rate limit (req/min)</th>
                                       <th style={{ padding: "6px 8px", fontSize: 10.5, textAlign: "right" }}>Actions</th>
                                     </tr>
                                   </thead>
                                   <tbody>
                                     {(keysByUser[u.user_id] ?? []).length === 0 ? (
                                       <tr>
-                                        <td colSpan={4} style={{ textAlign: "center", color: "var(--text-light)", padding: 12, fontSize: 12 }}>
+                                        <td colSpan={5} style={{ textAlign: "center", color: "var(--text-light)", padding: 12, fontSize: 12 }}>
                                           No API keys yet.
                                         </td>
                                       </tr>
                                     ) : (
-                                      (keysByUser[u.user_id] ?? []).map((k) => (
-                                        <tr key={k.key_id}>
-                                          <td style={{ padding: "6px 8px", fontSize: 12 }}>
-                                            <code style={{ fontFamily: "var(--font-mono)" }}>{k.key_prefix}…</code>
-                                            {k.label ? ` (${k.label})` : ""}
-                                          </td>
-                                          <td style={{ padding: "6px 8px" }}>
-                                            <span className={`badge ${k.status === "active" ? "badge-green" : "badge-red"}`}>
-                                              {k.status}
-                                            </span>
-                                          </td>
-                                          <td style={{ padding: "6px 8px", fontSize: 11.5, color: "var(--text-muted)" }}>
-                                            {k.model_entitlements.length === 0
-                                              ? "All models"
-                                              : k.model_entitlements.join(", ")}
-                                          </td>
-                                          <td style={{ padding: "6px 8px", textAlign: "right" }}>
-                                            <button
-                                              onClick={() => handleRevokeKey(u.user_id, k.key_id)}
-                                              disabled={k.status !== "active"}
-                                              className="btn btn-outline"
-                                              style={{ padding: "3px 8px", fontSize: 10.5, borderColor: "#f87171", color: "#ef4444" }}
-                                            >
-                                              Revoke
-                                            </button>
-                                          </td>
-                                        </tr>
-                                      ))
+                                      (keysByUser[u.user_id] ?? []).map((k) => {
+                                        const draft = rateLimitDrafts[k.key_id] ?? String(k.rate_limit_rpm);
+                                        const isDirty = draft.trim() !== String(k.rate_limit_rpm);
+                                        const isValid = /^\d+$/.test(draft.trim()) && Number(draft.trim()) > 0;
+                                        const isSaving = savingRateLimitKeyId === k.key_id;
+                                        return (
+                                          <tr key={k.key_id}>
+                                            <td style={{ padding: "6px 8px", fontSize: 12 }}>
+                                              <code style={{ fontFamily: "var(--font-mono)" }}>{k.key_prefix}…</code>
+                                              {k.label ? ` (${k.label})` : ""}
+                                            </td>
+                                            <td style={{ padding: "6px 8px" }}>
+                                              <span className={`badge ${k.status === "active" ? "badge-green" : "badge-red"}`}>
+                                                {k.status}
+                                              </span>
+                                            </td>
+                                            <td style={{ padding: "6px 8px", fontSize: 11.5, color: "var(--text-muted)" }}>
+                                              {k.model_entitlements.length === 0
+                                                ? "All models"
+                                                : k.model_entitlements.join(", ")}
+                                            </td>
+                                            <td style={{ padding: "6px 8px" }}>
+                                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                                <input
+                                                  type="number"
+                                                  min={1}
+                                                  value={draft}
+                                                  disabled={k.status !== "active" || isSaving}
+                                                  onChange={(e) =>
+                                                    setRateLimitDrafts((prev) => ({ ...prev, [k.key_id]: e.target.value }))
+                                                  }
+                                                  onKeyDown={(e) => {
+                                                    if (e.key === "Enter" && isDirty && isValid) {
+                                                      handlePatchRateLimit(u.user_id, k.key_id);
+                                                    }
+                                                  }}
+                                                  className="form-input"
+                                                  style={{ width: 70, padding: "3px 6px", fontSize: 11.5 }}
+                                                />
+                                                {isDirty && (
+                                                  <button
+                                                    onClick={() => handlePatchRateLimit(u.user_id, k.key_id)}
+                                                    disabled={!isValid || isSaving}
+                                                    className="btn"
+                                                    style={{ padding: "3px 8px", fontSize: 10.5 }}
+                                                  >
+                                                    {isSaving ? "Saving…" : "Save"}
+                                                  </button>
+                                                )}
+                                              </div>
+                                            </td>
+                                            <td style={{ padding: "6px 8px", textAlign: "right" }}>
+                                              <button
+                                                onClick={() => handleRevokeKey(u.user_id, k.key_id)}
+                                                disabled={k.status !== "active"}
+                                                className="btn btn-outline"
+                                                style={{ padding: "3px 8px", fontSize: 10.5, borderColor: "#f87171", color: "#ef4444" }}
+                                              >
+                                                Revoke
+                                              </button>
+                                            </td>
+                                          </tr>
+                                        );
+                                      })
                                     )}
                                   </tbody>
                                 </table>
@@ -778,6 +859,18 @@ export default function RbacView() {
                                     onChange={(e) => setNewKeyLabel(e.target.value)}
                                     className="form-input"
                                     style={{ padding: "6px 10px", fontSize: 12 }}
+                                  />
+                                </div>
+                                <div className="form-group" style={{ margin: 0 }}>
+                                  <label className="form-label" style={{ fontSize: 11 }}>Rate limit (req/min)</label>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    placeholder="60 (default)"
+                                    value={newKeyRateLimit}
+                                    onChange={(e) => setNewKeyRateLimit(e.target.value)}
+                                    className="form-input"
+                                    style={{ padding: "6px 10px", fontSize: 12, width: 110 }}
                                   />
                                 </div>
                                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>

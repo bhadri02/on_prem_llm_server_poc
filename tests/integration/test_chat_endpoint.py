@@ -8,6 +8,7 @@ Covers task 9.1:
   Test 2 — Streaming path: completed response framed as one SSE chunk
   Test 3 — Downstream timeout → HTTP 502
   Test 4 — Full middleware pipeline emits audit events in correct order
+  Test 5 — Audit events are POSTed to the Audit Store, correlated by request_id
 
 Strategy
 --------
@@ -475,3 +476,63 @@ def test_full_middleware_pipeline_emits_audit_events_in_order(test_client, capsy
         assert event.get("outcome") in ("pass", "block", "error"), (
             f"Audit event outcome must be pass/block/error, got {event.get('outcome')!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Test 5 — Audit events are POSTed to the Audit Store, correlated by
+# request_id, not just written to stdout
+# ---------------------------------------------------------------------------
+
+
+def test_successful_request_posts_correlated_audit_events_to_audit_store(test_client):
+    """A successful request must schedule a durable Audit Store write (not
+    just the stdout-only emit_audit_event) for auth_pass, request_received,
+    and response_sent — all three sharing the SAME request_id, proving
+    LoggingMiddleware's generated id is the one actually used end to end
+    rather than each layer minting its own uncorrelated id.
+    """
+    mock_imf = _make_imf_document()
+    mock_post = AsyncMock()
+
+    with (
+        patch("api_gateway.routers.chat.post_audit_event", new=mock_post),
+        patch("api_gateway.services.audit_client.post_audit_event", new=mock_post),
+        patch(
+            "api_gateway.routers.chat.forward_to_security",
+            new=AsyncMock(return_value=mock_imf),
+        ),
+    ):
+        response = test_client.post(
+            "/v1/chat/completions",
+            json=VALID_REQUEST_BODY,
+            headers=VALID_HEADERS,
+        )
+
+    assert response.status_code == 200
+
+    posted_events = [call.args[0] for call in mock_post.call_args_list]
+    posted_event_types = [e.event_type for e in posted_events]
+    assert "auth_pass" in posted_event_types
+    assert "request_received" in posted_event_types
+    assert "response_sent" in posted_event_types
+
+    request_ids = {e.request_id for e in posted_events}
+    assert len(request_ids) == 1, (
+        f"Expected all audit events for one request to share one request_id, "
+        f"got: {request_ids}"
+    )
+
+
+def test_missing_auth_posts_auth_fail_to_audit_store(test_client):
+    """A 401 (no auth header at all) must still schedule an auth_fail POST
+    to the Audit Store — this is exactly the class of gateway-layer
+    rejection that used to be invisible outside local stdout."""
+    mock_post = AsyncMock()
+    with (
+        patch("api_gateway.services.audit_client.post_audit_event", new=mock_post),
+    ):
+        response = test_client.post("/v1/chat/completions", json=VALID_REQUEST_BODY)
+
+    assert response.status_code == 401
+    posted_events = [call.args[0] for call in mock_post.call_args_list]
+    assert any(e.event_type == "auth_fail" for e in posted_events)

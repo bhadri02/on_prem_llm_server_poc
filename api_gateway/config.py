@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     # env: DOWNSTREAM_TIMEOUT — default 10.0 seconds
     downstream_timeout_seconds: float = 10.0
 
+    # env: AUDIT_STORE_URL — base URL of the Audit Store
+    audit_store_url: str = "http://audit-store:9200"
+    # env: AUDIT_API_KEY — X-API-Key header value for the Audit Store
+    audit_api_key: str = ""
+
     # ── Identity resolution (Phase 2 — RBAC + per-user API keys) ────────────
     # env: ADMIN_PORTAL_URL — base URL of the Admin Portal API
     admin_portal_url: str = "http://admin-portal:8084"

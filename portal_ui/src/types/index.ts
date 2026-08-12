@@ -120,7 +120,9 @@ export interface ApiKey {
   label: string | null;
   status: "active" | "revoked" | "expired";
   expires_at: string | null;
-  rate_limit_rpm: number | null;
+  /** Requests/min for this key alone — every key has its own concrete limit,
+   *  no platform-wide fallback (see api_gateway/middleware/rate_limit.py). */
+  rate_limit_rpm: number;
   created_at: string;
   last_used_at: string | null;
   model_entitlements: string[];

@@ -378,12 +378,16 @@ export async function getAllKeys(): Promise<ApiKeyWithOwner[]> {
 /** POST /portal/users/{userId}/keys — raw key returned once, on creation */
 export async function createApiKey(
   userId: string,
-  opts: { label?: string; model_entitlements?: string[] } = {},
+  opts: { label?: string; model_entitlements?: string[]; rate_limit_rpm?: number } = {},
 ): Promise<ApiKeyCreated> {
   const res = await fetch(`/portal/users/${encodeURIComponent(userId)}/keys`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ label: opts.label ?? null, model_entitlements: opts.model_entitlements ?? [] }),
+    body: JSON.stringify({
+      label: opts.label ?? null,
+      model_entitlements: opts.model_entitlements ?? [],
+      ...(opts.rate_limit_rpm != null ? { rate_limit_rpm: opts.rate_limit_rpm } : {}),
+    }),
   });
   return handleResponse<ApiKeyCreated>(res);
 }
@@ -415,6 +419,23 @@ export async function patchKeyEntitlements(
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model_entitlements: modelEntitlements }),
+    },
+  );
+  return handleResponse<ApiKey>(res);
+}
+
+/** PATCH /portal/users/{userId}/keys/{keyId}/rate-limit */
+export async function patchKeyRateLimit(
+  userId: string,
+  keyId: string,
+  rateLimitRpm: number,
+): Promise<ApiKey> {
+  const res = await fetch(
+    `/portal/users/${encodeURIComponent(userId)}/keys/${encodeURIComponent(keyId)}/rate-limit`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rate_limit_rpm: rateLimitRpm }),
     },
   );
   return handleResponse<ApiKey>(res);

@@ -432,3 +432,48 @@ class TestClassifyTaskMultiMessageConcatenation:
             _msg("this function"),
         ]
         assert classify_task(messages, rules) == "code"
+
+
+class TestClassifyTaskHarnessWrapperExclusion:
+    """Real bug regression: GitHub Copilot Chat's agent-mode harness appends
+    a near-constant <context>/<reminderinstructions> tool block to every
+    request, full of code-editing language (e.g. "insert_edit_into_file").
+    Before this fix, classify_task's default keyword rules (which include
+    "insert_edit_into_file"-adjacent terms as "code" keywords, "code" being
+    first in PRIORITY_ORDER) matched this wrapper text on every single
+    request from this client, misclassifying "tell me a joke" as
+    task_type="code" — this affects RBAC policy enforcement
+    (intelligent_router/pipeline.py Stage 2b's (role, task_type) check runs
+    regardless of whether the model was pinned or auto-selected), not just
+    model auto-selection.
+    """
+
+    _WRAPPER = (
+        "<context>\nthe current date is 2026-08-12.\n</context>\n"
+        "<reminderinstructions>\nwhen using the insert_edit_into_file tool, "
+        "avoid repeating existing code.\n</reminderinstructions>"
+    )
+
+    def test_wrapper_message_excluded_from_classification(self):
+        rules = _make_rules(code=["insert_edit_into_file", "repeating existing code"])
+        messages = [
+            _msg("tell me a joke"),
+            _msg(self._WRAPPER),
+        ]
+        assert classify_task(messages, rules) == "chat"
+
+    def test_real_question_still_classified_normally_alongside_wrapper(self):
+        rules = _make_rules(code=["insert_edit_into_file", "python"])
+        messages = [
+            _msg("write me a python function"),
+            _msg(self._WRAPPER),
+        ]
+        assert classify_task(messages, rules) == "code"
+
+    def test_wrapper_prefix_matching_is_case_insensitive(self):
+        rules = _make_rules(code=["insert_edit_into_file"])
+        messages = [
+            _msg("tell me a joke"),
+            _msg(self._WRAPPER.upper()),
+        ]
+        assert classify_task(messages, rules) == "chat"

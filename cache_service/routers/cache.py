@@ -40,23 +40,56 @@ from cache_service.schemas.imf import IMFDocument, IMFResponse
 # Cache key derivation helper
 # ---------------------------------------------------------------------------
 
+# Some clients' agent-mode harnesses (confirmed: GitHub Copilot Chat's native
+# "Bring Your Own Model" integration) append a near-constant tool/context
+# reminder block as the LAST message on every single turn, rather than the
+# user's own text — e.g. "<context>\nthe current date is ...\n</context>\n
+# <reminderinstructions>\nwhen using the insert_edit_into_file tool, ...".
+# That block barely changes turn to turn, so treating it as "the current
+# turn" (see the docstring below on why *some* last-message assumption is
+# needed) makes every real question from this client collide into the same
+# cache entry — this was a real, observed bug: "tell me a joke" and "what
+# time is it" produced near-identical embeddings (cosine similarity 0.98)
+# purely because both prompts' actual last message was this same wrapper.
+_HARNESS_WRAPPER_PREFIXES = ("<context>", "<reminderinstructions>")
+
+
+def _find_current_turn_content(messages: list[dict]) -> str:
+    """Return the content of the message that actually represents the
+    current turn awaiting a reply.
+
+    Scans backward from the end and returns the first message whose content
+    doesn't start with a known harness-wrapper tag, so a trailing reminder
+    block doesn't get mistaken for "the current turn". Falls back to the
+    true last message if every message looks like a wrapper (keeps existing
+    behavior unchanged for clients that don't do this — portal_ui,
+    Continue.dev — where the true last message already is the real turn).
+    """
+    for message in reversed(messages):
+        content = (message.get("content") or "").strip()
+        if not content.lower().startswith(_HARNESS_WRAPPER_PREFIXES):
+            return content
+    return (messages[-1].get("content") or "").strip() if messages else ""
+
+
 def make_cache_key(messages: list[dict], model: str, task_type: str) -> str:
     """Return the SHA-256 hex digest that uniquely identifies a cache entry.
 
-    The key is derived from ONLY the *last* message's content — i.e. the
-    current turn actually awaiting a response — not the whole conversation.
-    The Chat UI resends the full accumulated history (including prior
-    assistant replies) on every turn since the backend is stateless
-    per-request; hashing/embedding all of it would make the cache key (and
-    the semantic-cache embedding — see lookup()/write() below) dominated by
-    the ever-growing shared prefix of earlier turns rather than the new
+    The key is derived from ONLY the current turn's content (see
+    ``_find_current_turn_content()``) — not the whole conversation. The Chat
+    UI resends the full accumulated history (including prior assistant
+    replies) on every turn since the backend is stateless per-request;
+    hashing/embedding all of it would make the cache key (and the
+    semantic-cache embedding — see lookup()/write() below) dominated by the
+    ever-growing shared prefix of earlier turns rather than the new
     question, causing unrelated questions late in a conversation to collide
     (this was a real bug: "do you know the time" semantically matched a
     cached "good morning" reply purely because both prompts were mostly
     identical multi-turn history with only a small differing tail).
 
     The key is derived by:
-      1. Taking the last message's ``content`` and stripping whitespace.
+      1. Finding the current turn's content via ``_find_current_turn_content()``
+         and stripping whitespace.
       2. Lower-casing it.
       3. Appending ``|{model}|{task_type}`` to form the raw key material.
       4. UTF-8–encoding and SHA-256–hashing the raw string.
@@ -68,15 +101,13 @@ def make_cache_key(messages: list[dict], model: str, task_type: str) -> str:
     Args:
         messages:  List of message dicts, each containing at minimum a
                    ``"content"`` key (e.g. ``[{"role": "user", "content": "…"}]``).
-                   Only the last element is used — by protocol, the request
-                   always ends with the current turn awaiting a reply.
         model:     The selected model identifier (``routing.selected_model``).
         task_type: The request task type (``request.task_type``).
 
     Returns:
         64-character lowercase hex string (SHA-256 digest).
     """
-    content = messages[-1]["content"].strip().lower()
+    content = _find_current_turn_content(messages).lower()
     raw = f"{content}|{model}|{task_type}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -132,10 +163,11 @@ async def lookup(imf: IMFDocument, request: Request) -> Any:
         imf.routing.selected_model,
         task_type,
     )
-    # Only the current turn (last message) — see make_cache_key()'s docstring
-    # for why joining the whole conversation history is a real bug, not a
-    # style choice.
-    prompt_text = imf.request.messages[-1].content.strip().lower()
+    # Only the current turn — see make_cache_key()'s docstring for why
+    # joining the whole conversation history is a real bug, not a style
+    # choice, and _find_current_turn_content()'s docstring for why the true
+    # last message isn't always the current turn either.
+    prompt_text = _find_current_turn_content(messages_as_dicts).lower()
 
     # Helper: build miss response
     def _miss_response() -> LookupResponse:
@@ -350,10 +382,11 @@ async def write(imf: IMFDocument, request: Request) -> Any:
         imf.routing.selected_model,
         task_type,
     )
-    # Only the current turn (last message) — see make_cache_key()'s docstring
-    # for why joining the whole conversation history is a real bug, not a
-    # style choice.
-    prompt_text = imf.request.messages[-1].content.strip().lower()
+    # Only the current turn — see make_cache_key()'s docstring for why
+    # joining the whole conversation history is a real bug, not a style
+    # choice, and _find_current_turn_content()'s docstring for why the true
+    # last message isn't always the current turn either.
+    prompt_text = _find_current_turn_content(messages_as_dicts).lower()
 
     # Uniform TTL across every task_type (Req: cache hits only within 1
     # minute, then a miss, regardless of format/task).

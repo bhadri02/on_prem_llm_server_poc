@@ -3,9 +3,11 @@
  *
  * Admin-wide API key listing (Phase 5 — GET /portal/keys/), spanning every
  * user rather than being scoped to one (that per-user view already exists
- * inline in RbacView). Read-only here; revoke/entitlement edits still go
- * through the per-user panel in Access Control, which has the user_id this
- * listing's own rows are joined against.
+ * inline in RbacView). Read-only here, including each key's own rate limit
+ * (requests/min — there is no platform-wide fallback, every key carries a
+ * concrete value); revoke/entitlement/rate-limit edits still go through the
+ * per-user panel in Access Control, which has the user_id this listing's
+ * own rows are joined against.
  */
 
 import { useEffect, useState } from "react";
@@ -55,8 +57,8 @@ export default function KeysView() {
         <div>
           <h1 style={{ margin: 0 }}>API Keys</h1>
           <p style={{ color: "var(--text-muted)", fontSize: 14.5, marginTop: 4, marginBottom: 0 }}>
-            Every API key across all users, with model entitlements. Revoke or edit entitlements from the
-            Access Control tab's per-user key panel.
+            Every API key across all users, with model entitlements and rate limits. Revoke or edit
+            entitlements/rate limits from the Access Control tab's per-user key panel.
           </p>
         </div>
         <input
@@ -82,6 +84,7 @@ export default function KeysView() {
                   <th>Key</th>
                   <th>Owner</th>
                   <th>Entitled models</th>
+                  <th>Rate limit</th>
                   <th>Expires</th>
                   <th>Status</th>
                   <th>Last used</th>
@@ -90,7 +93,7 @@ export default function KeysView() {
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={6} style={{ textAlign: "center", color: "var(--text-light)", padding: 32 }}>
+                    <td colSpan={7} style={{ textAlign: "center", color: "var(--text-light)", padding: 32 }}>
                       No keys found.
                     </td>
                   </tr>
@@ -105,6 +108,7 @@ export default function KeysView() {
                       <td style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
                         {k.model_entitlements.length === 0 ? "All models" : k.model_entitlements.join(", ")}
                       </td>
+                      <td style={{ fontSize: 12.5, color: "var(--text-muted)" }}>{k.rate_limit_rpm} req/min</td>
                       <td style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
                         {k.expires_at ? new Date(k.expires_at).toLocaleDateString() : "Never"}
                       </td>
