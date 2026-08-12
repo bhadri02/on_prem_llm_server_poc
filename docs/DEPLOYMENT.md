@@ -36,8 +36,8 @@ config. This guide is the one that matches the code as it stands.
 
 ```
                           ┌─────────────────────────────┐
- Browser ───────────────► │  portal-ui  (nginx, port 80) │
-                          │  /            -> React SPA    │
+ Browser ───────────────► │   nginx (plain image, :80)   │
+                          │  /            -> portal-ui    │
                           │  /portal/*    -> admin-portal │
                           │  /v1/*        -> api-gateway  │
                           └───────────────┬───────────────┘
@@ -66,26 +66,39 @@ config. This guide is the one that matches the code as it stands.
 ```
 
 Every service is a separate container on one Docker Compose network,
-resolving each other by service name (`http://router:8082`, etc.). `portal-ui`
-is the only container with a published host port by default — it's the
-platform's single front door, so the browser only ever needs to know one
-hostname/port. See `deploy/nginx/portal.conf` for the exact routing rules.
+resolving each other by service name (`http://router:8082`, etc.).
 
-**Nothing to install or configure separately for this** — nginx isn't a
-host-level package here, it's baked into the `portal-ui` image itself
-(`portal_ui/Dockerfile`'s runtime stage is `FROM nginx:alpine`), and
-`docker-compose.prod.yml` mounts `deploy/nginx/portal.conf` over its default
-config on that one service:
+**`nginx` and `portal-ui` are two separate services/images, deliberately —
+not nginx baked into the portal_ui image.** `nginx` is a plain,
+unmodified `nginx:alpine` with `deploy/nginx/portal.conf` mounted in; it's
+the only container with a published host port, and its `/portal`/`/v1`
+routing rules don't depend on `portal-ui` existing at all:
 
 ```yaml
-portal-ui:
+nginx:
+  image: nginx:alpine        # not a custom build
   volumes:
     - ./deploy/nginx/portal.conf:/etc/nginx/conf.d/default.conf:ro
+  ports:
+    - "${NGINX_PUBLIC_PORT:-80}:80"
+
+portal-ui:
+  build: { context: ., dockerfile: portal_ui/Dockerfile }
+  # no ports: — not published, only reachable from nginx over the internal network
 ```
 
-It comes up fully configured the moment `docker compose ... up -d` (Step 4)
-starts that container — no separate nginx install, no manual step, nothing
-to do on the host itself.
+This means **`portal_ui` is genuinely optional.** If you're not deploying
+it (e.g. a real frontend team's own build takes its place, and you don't
+want to push the `portal_ui` image to this server), remove the `portal-ui`
+service from `docker-compose.prod.yml` and change only `deploy/nginx/portal.conf`'s
+`location /` block to point at wherever your real frontend is served from
+instead — `/portal` and `/v1` (the actual API surface) need no changes at
+all, since they only ever proxy to `admin-portal`/`api-gateway`, never to
+`portal-ui`.
+
+**Nothing to install or configure on the host either way** — `nginx` comes
+up fully configured the moment `docker compose ... up -d` (Step 4) starts
+that container; there's no host-level nginx package or manual config step.
 
 ---
 
@@ -210,7 +223,10 @@ automatically — you don't need to start things one at a time):
    and the 4 default roles automatically (`admin_portal/db/seed.py`).
 5. `security-layer`, `router`, `cache`, `inference-adapter` come up.
 6. `agent-framework`, `api-gateway` come up last among the backend services.
-7. `portal-ui` comes up once `admin-portal` and `api-gateway` are healthy.
+7. `portal-ui` (no dependencies of its own — a static file server) and
+   `nginx` (once `admin-portal` and `api-gateway` are healthy) come up.
+   `nginx` doesn't wait on `portal-ui` specifically — if it isn't deployed
+   or isn't healthy yet, `/portal` and `/v1` still work; only `/` 502s.
 
 Watch progress:
 
@@ -390,14 +406,13 @@ untrusted network:
 
 - [ ] Every secret in `.env.prod` is a real, randomly-generated value (not
       left as any placeholder or copied from local dev).
-- [ ] Put TLS in front of `portal-ui` — either terminate TLS at a reverse
+- [ ] Put TLS in front of `nginx` — either terminate TLS at a reverse
       proxy/load balancer in front of this stack, or extend
       `deploy/nginx/portal.conf` with a `listen 443 ssl` server block and a
       real certificate (e.g. via certbot). Nothing here does this today.
 - [ ] Reconsider publishing `api_gateway` directly on `:8080` — if only the
-      Portal UI's `/v1/*` path (proxied through `portal-ui`) should be
-      reachable, remove the `ports:` entry from `api-gateway` in
-      `docker-compose.prod.yml`.
+      `/v1/*` path proxied through `nginx` should be reachable, remove the
+      `ports:` entry from `api-gateway` in `docker-compose.prod.yml`.
 - [ ] Tune `RATE_LIMIT_REQUESTS`/`RATE_LIMIT_WINDOW_SECONDS` for real traffic
       (the compose defaults are the code's own defaults — 60 req/60s per key
       — not a demo-reduced value).
@@ -494,7 +509,7 @@ whatever the actual current password turns out to be.
 
 ### Port 80 already in use on the host
 
-Set `PORTAL_UI_PORT` in `.env.prod` to a free port and re-run `up -d`.
+Set `NGINX_PUBLIC_PORT` in `.env.prod` to a free port and re-run `up -d`.
 
 ### `docker compose build` fails partway through on a slow/offline network
 

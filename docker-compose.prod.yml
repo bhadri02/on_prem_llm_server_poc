@@ -323,14 +323,42 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
 
   # ---------------------------------------------------------------------
-  # Frontend — also the single front door for the whole platform (see
-  # deploy/nginx/portal.conf: / -> SPA, /portal -> admin-portal, /v1 -> api-gateway)
+  # Frontend — portal_ui's own image, serving ONLY its static SPA files via
+  # the plain default.conf baked into portal_ui/Dockerfile (SPA fallback,
+  # no proxying). Deliberately not published to the host and not the front
+  # door — the standalone "nginx" service below is. This service is
+  # entirely optional: if you're not deploying portal_ui at all (e.g. a
+  # real frontend team's own build takes its place), remove it and point
+  # nginx's "location /" at wherever that build is served from instead.
   # ---------------------------------------------------------------------
   portal-ui:
     build:
       context: .
       dockerfile: portal_ui/Dockerfile
     container_name: llm-portal-ui
+    restart: unless-stopped
+    healthcheck:
+      # 127.0.0.1, not localhost — BusyBox wget in this image resolves
+      # "localhost" to ::1 first, and nginx only listens on 0.0.0.0 (IPv4),
+      # so the IPv6 attempt fails to connect even though the app is healthy.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # ---------------------------------------------------------------------
+  # Reverse proxy — the platform's single public front door. Deliberately
+  # a plain, unmodified official image (no custom build) with routing
+  # rules mounted in from deploy/nginx/portal.conf: / -> portal-ui,
+  # /portal -> admin-portal, /v1 -> api-gateway. Kept fully independent of
+  # portal-ui on purpose (separate service, separate image, no build
+  # dependency between them) — if portal-ui isn't deployed, only "/" stops
+  # working; /portal and /v1 (the actual API surface) are unaffected.
+  # ---------------------------------------------------------------------
+  nginx:
+    image: nginx:alpine
+    container_name: llm-nginx
     restart: unless-stopped
     depends_on:
       admin-portal:
@@ -340,12 +368,9 @@ services:
     volumes:
       - ./deploy/nginx/portal.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
-      - "${PORTAL_UI_PORT:-80}:80"
+      - "${NGINX_PUBLIC_PORT:-80}:80"
     healthcheck:
-      # 127.0.0.1, not localhost — BusyBox wget in this image resolves
-      # "localhost" to ::1 first, and nginx only listens on 0.0.0.0 (IPv4),
-      # so the IPv6 attempt fails to connect even though the app is healthy.
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/portal/health"]
       interval: 10s
       timeout: 5s
       retries: 12
