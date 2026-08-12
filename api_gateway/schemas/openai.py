@@ -1,11 +1,33 @@
 """OpenAI-compatible request and response schemas for the API Gateway."""
 
+from typing import Any
+
 from pydantic import BaseModel, field_validator
 
 
 class OpenAIMessage(BaseModel):
     role: str
     content: str
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def flatten_content_parts(cls, v: Any) -> Any:
+        """Accept OpenAI's multipart content-parts array, not just a plain string.
+
+        Real OpenAI-compatible clients (e.g. Continue.dev) commonly resend a
+        prior turn's own content as ``[{"type": "text", "text": "..."}, ...]``
+        once conversation history builds up, even for plain text-only chats —
+        not just for vision/multimodal input. This pipeline has no image
+        support, so non-text parts (e.g. ``image_url``) are dropped rather
+        than rejected; a purely-image message flattens to an empty string.
+        """
+        if isinstance(v, list):
+            return "\n".join(
+                part.get("text", "")
+                for part in v
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+        return v
 
 
 class OpenAIChatRequest(BaseModel):

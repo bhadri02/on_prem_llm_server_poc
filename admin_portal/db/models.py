@@ -28,6 +28,14 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Every API key carries its own concrete rate limit — there is no platform-
+# wide fallback a key silently inherits. This is only the value a newly
+# created key gets when the admin doesn't specify one; it is stored per-row,
+# not read from a shared setting at request time (see api_gateway's
+# RateLimitMiddleware, which only ever reads the resolved key's own value).
+DEFAULT_RATE_LIMIT_RPM = 60
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -83,7 +91,9 @@ class ApiKey(Base):
     label: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")  # active | revoked | expired
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    rate_limit_rpm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rate_limit_rpm: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=DEFAULT_RATE_LIMIT_RPM, server_default=str(DEFAULT_RATE_LIMIT_RPM)
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

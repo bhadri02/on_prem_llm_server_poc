@@ -33,11 +33,18 @@ class AuthMiddleware(BaseHTTPMiddleware):
         - /health  — liveness probe; no auth required
         - /metrics — Prometheus scrape endpoint; no auth required
 
-    Every non-exempt request resolves its ``X-Api-Key`` against the Admin
-    Portal (``api_gateway.services.key_resolver.resolve_key``) instead of
-    comparing against a single shared secret. This is a server-side identity
-    lookup — the caller's roles/entitlements are never trusted from the
-    request payload (Phase 2 — RBAC + per-user API keys).
+    Every non-exempt request resolves its API key against the Admin Portal
+    (``api_gateway.services.key_resolver.resolve_key``) instead of comparing
+    against a single shared secret. This is a server-side identity lookup —
+    the caller's roles/entitlements are never trusted from the request
+    payload (Phase 2 — RBAC + per-user API keys).
+
+    The key may be sent as either ``X-Api-Key: <key>`` (this platform's
+    original header) or the standard ``Authorization: Bearer <key>`` header
+    that virtually every OpenAI-compatible client/SDK sends by default
+    (added to support external tools like Continue.dev without requiring
+    them to special-case a non-standard header). ``X-Api-Key`` is checked
+    first for backward compatibility; both resolve identically otherwise.
 
     On failure, emits an ``auth_fail`` audit event and returns HTTP
     401 (key not found/revoked/expired), 403 (no active roles), or
@@ -58,6 +65,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request_id: str = getattr(request.state, "request_id", None) or str(uuid.uuid4())
 
         key = request.headers.get("X-Api-Key", "")
+        if not key:
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.lower().startswith("bearer "):
+                key = auth_header[len("Bearer "):].strip()
 
         if not key:
             emit_audit_event(

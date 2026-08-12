@@ -50,7 +50,7 @@ async def _fake_resolve_key(key, client):
             roles=["developer"],
             model_entitlements=[],
             key_id="test-key-id",
-            rate_limit_override=None,
+            rate_limit_override=60,
         )
     return None
 
@@ -153,18 +153,19 @@ def test_log_level_error_suppresses_info_entries(monkeypatch, capsys):
     monkeypatch.setenv("DOWNSTREAM_SECURITY_URL", DOWNSTREAM_URL)
     monkeypatch.setenv("LOG_LEVEL", "ERROR")
 
+    import fakeredis.aioredis
+
     from api_gateway.config import get_settings
     from api_gateway.main import create_app
-    from api_gateway.middleware.rate_limit import RateLimitMiddleware
     from starlette.testclient import TestClient
 
     get_settings.cache_clear()
-    RateLimitMiddleware._store.clear()
     monkeypatch.setattr("api_gateway.middleware.auth.resolve_key", _fake_resolve_key)
 
     app = create_app()
 
     with TestClient(app, raise_server_exceptions=False) as client:
+        app.state.redis = fakeredis.aioredis.FakeRedis(decode_responses=False)
         resp = client.get("/v1/models", headers={"X-Api-Key": VALID_KEY})
 
     assert resp.status_code == 200, (
@@ -202,18 +203,19 @@ def test_log_level_info_emits_request_log_entries(monkeypatch, capsys):
     monkeypatch.setenv("DOWNSTREAM_SECURITY_URL", DOWNSTREAM_URL)
     monkeypatch.setenv("LOG_LEVEL", "INFO")
 
+    import fakeredis.aioredis
+
     from api_gateway.config import get_settings
     from api_gateway.main import create_app
-    from api_gateway.middleware.rate_limit import RateLimitMiddleware
     from starlette.testclient import TestClient
 
     get_settings.cache_clear()
-    RateLimitMiddleware._store.clear()
     monkeypatch.setattr("api_gateway.middleware.auth.resolve_key", _fake_resolve_key)
 
     app = create_app()
 
     with TestClient(app, raise_server_exceptions=False) as client:
+        app.state.redis = fakeredis.aioredis.FakeRedis(decode_responses=False)
         resp = client.get("/v1/models", headers={"X-Api-Key": VALID_KEY})
 
     assert resp.status_code == 200, (

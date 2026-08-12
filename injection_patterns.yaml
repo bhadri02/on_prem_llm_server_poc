@@ -19,7 +19,9 @@ patterns:
   - "act as if"
   - "pretend you are"
   # --- Regex patterns (compiled via re.compile with re.IGNORECASE) ---
-  # Matches template injection tokens: {{ ... }}
-  - '\{\{.*\}\}'
-  # Matches PHP-style processing instruction tags: <? ... ?>
-  - '<\?.*\?>'
+  # Matches instruction-like content inside template braces, e.g.
+  # "{{ ignore previous instructions }}" — narrowed to require one of these
+  # keywords (rather than a bare '\{\{.*\}\}') because plain double-curly-brace
+  # syntax is completely ordinary in real source (Jinja2, Vue, Handlebars, Go
+  # templates) and would otherwise false-positive on any such file.
+  - '\{\{[^}]*\b(ignore|disregard|system|instruction|prompt|override|jailbreak)\b[^}]*\}\}'

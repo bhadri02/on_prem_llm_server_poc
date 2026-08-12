@@ -31,7 +31,7 @@ class KeyProfile:
     roles: list[str]
     model_entitlements: list[str]
     key_id: str
-    rate_limit_override: int | None
+    rate_limit_override: int
 
 
 class KeyResolverUnavailable(Exception):
@@ -100,7 +100,7 @@ async def resolve_key(key: str, client: httpx.AsyncClient) -> KeyProfile | None:
             roles=body.get("roles") or [],
             model_entitlements=body.get("model_entitlements") or [],
             key_id=body["key_id"],
-            rate_limit_override=body.get("rate_limit_override"),
+            rate_limit_override=int(body["rate_limit_override"]),
         )
     except Exception as exc:
         raise KeyResolverUnavailable("invalid resolve response body") from exc

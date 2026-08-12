@@ -391,14 +391,23 @@ should reproduce the *documented* gap, not something worse:
 - [ ] Chat has no session persistence — restarting `admin_portal` or
       reloading the Chat UI loses all prior turns; there's no database row
       to check.
-- [ ] `stream: true` on `/v1/chat/completions` — the API Gateway *has* an SSE
-      code path (`api_gateway/routers/chat.py::stream_generator`), but don't
-      mistake its presence for working streaming: `inference_adapter`
-      unconditionally forces `stream=False` to Ollama
-      (`inference_adapter/routers/infer.py`, `streaming_not_supported`
-      warning) and `security_layer`/`intelligent_router` don't speak SSE
-      either. A `stream: true` request today gets proxied bytes of a single
-      buffered JSON response, not token-by-token chunks — verify this
-      yourself with `curl -N` and confirm you see one JSON blob arrive at
-      once, not incremental chunks, rather than assuming the code path means
-      it works.
+- [x] `stream: true` on `/v1/chat/completions` — fixed, but still not
+      token-by-token. `inference_adapter` unconditionally forces
+      `stream=False` to Ollama (`inference_adapter/routers/infer.py`,
+      `streaming_not_supported` warning) and `security_layer`/
+      `intelligent_router` don't speak SSE either, so there is no real
+      per-token data anywhere upstream of `api_gateway`. Two real bugs in
+      `api_gateway/routers/chat.py` used to compound this: (1) the old code
+      returned a `StreamingResponse` from *inside* the
+      `async with client.stream(...) as resp:` block — `return` exits that
+      context manager immediately, closing the connection before the
+      generator ever iterated it, so the client got `200` with a
+      permanently empty body; (2) even had that worked, it would have proxied
+      the raw internal IMF envelope byte-for-byte (leaking `user.key_id` and
+      other internal fields to the client) instead of an OpenAI-shaped
+      response. Fixed: the streaming path now reuses the exact same
+      `forward_to_security()` call as non-streaming, then frames the one
+      completed response as a single `chat.completion.chunk` SSE event +
+      `data: [DONE]` (`sse_single_chunk()`). Verify with `curl -N` — expect
+      one `data: {...}` event followed by `data: [DONE]`, not incremental
+      chunks and not the old empty body.

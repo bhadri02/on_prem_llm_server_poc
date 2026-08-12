@@ -5,8 +5,9 @@ Covers:
   9.2.1 — GET /health without X-Api-Key returns 200 {"status": "ok"}
   9.2.2 — GET /v1/chat/completions returns 405 Method Not Allowed
   9.2.3 — GET /undefined/path/that/does/not/exist returns 404
-  9.2.4 — 61 sequential requests with the same API key; 61st returns 429
-           with Retry-After: 60 and the canonical error body
+  9.2.4 — Per-key rate limiting (Redis-backed, fakeredis in tests): a key's
+           own limit blocks further requests, keys are isolated from each
+           other, and Redis unavailability fails open
 
 ``api_gateway.main`` calls ``get_settings()`` at module import time and
 calls ``sys.exit(1)`` if ``GATEWAY_API_KEY`` is missing.  To avoid this
@@ -17,6 +18,8 @@ Validates: Requirements 1.3, 1.4, 1.7, 3.4
 """
 
 from __future__ import annotations
+
+from contextlib import contextmanager
 
 import pytest
 
@@ -44,7 +47,7 @@ async def _fake_resolve_key(key, client):
             roles=["developer"],
             model_entitlements=[],
             key_id="test-key-id",
-            rate_limit_override=None,
+            rate_limit_override=60,
         )
     return None
 
@@ -146,62 +149,147 @@ def test_undefined_path_returns_404(gateway_client):
 
 
 # ---------------------------------------------------------------------------
-# 9.2.4 — 61 sequential requests with the same key; 61st returns 429
+# Rate limiting — per-key only, Redis-backed (fakeredis in tests).
+#
+# There is no platform-wide request-count fallback: every resolved key
+# carries its own concrete rate_limit_override, and RateLimitMiddleware
+# reads only that value. Real Redis is swapped for fakeredis.aioredis so
+# these tests are deterministic and don't depend on a running Redis.
 # ---------------------------------------------------------------------------
 
 
-def test_rate_limit_61st_request_returns_429(monkeypatch):
-    """61 sequential requests with the same API key; 61st must return 429.
+@contextmanager
+def _rate_limit_client(monkeypatch, resolve_key_fn):
+    """Yield a TestClient with a fresh fakeredis backing RateLimitMiddleware.
 
-    Strategy:
-      - Use GET /v1/models (requires auth, no downstream call needed) so all
-        60 allowed requests complete as 200 without a real security service.
-      - The 61st request must be rejected with HTTP 429, Retry-After: 60,
-        and the canonical error body.
-      - RateLimitMiddleware._store is cleared before the test to ensure no
-        residual state from other tests bleeds in.
-
-    Validates: Requirements 3.4
+    The app's lifespan creates a real redis.asyncio client pointed at
+    whatever REDIS_URL resolves to; entering the TestClient context runs
+    that lifespan, then this swaps app.state.redis for an isolated
+    fakeredis instance before any request is made.
     """
+    import fakeredis.aioredis
+
     monkeypatch.setenv("GATEWAY_API_KEY", VALID_KEY)
     monkeypatch.setenv("DOWNSTREAM_SECURITY_URL", DOWNSTREAM_URL)
 
     from api_gateway.config import get_settings
     from api_gateway.main import create_app
-    from api_gateway.middleware.rate_limit import RateLimitMiddleware
+    from starlette.testclient import TestClient
+
+    get_settings.cache_clear()
+    monkeypatch.setattr("api_gateway.middleware.auth.resolve_key", resolve_key_fn)
+
+    app = create_app()
+    with TestClient(app, raise_server_exceptions=False) as client:
+        app.state.redis = fakeredis.aioredis.FakeRedis(decode_responses=False)
+        yield client
+    get_settings.cache_clear()
+
+
+def test_rate_limit_blocks_once_key_specific_limit_is_reached(monkeypatch):
+    """A key with rate_limit_override=5 gets exactly 5 successful requests;
+    the 6th must return 429 with Retry-After and the canonical error body.
+
+    Validates: Requirements 3.4
+    """
+    limit = 5
+
+    async def _fake_resolve(key, client):
+        from api_gateway.services.key_resolver import KeyProfile
+
+        if key == VALID_KEY:
+            return KeyProfile(
+                user_id="poc-user",
+                username="poc-user",
+                department="poc",
+                roles=["developer"],
+                model_entitlements=[],
+                key_id="test-key-id",
+                rate_limit_override=limit,
+            )
+        return None
+
+    with _rate_limit_client(monkeypatch, _fake_resolve) as client:
+        for i in range(1, limit + 1):
+            resp = client.get("/v1/models", headers={"X-Api-Key": VALID_KEY})
+            assert resp.status_code == 200, (
+                f"Request #{i}/{limit} expected 200, got {resp.status_code}: {resp.text}"
+            )
+
+        resp_over = client.get("/v1/models", headers={"X-Api-Key": VALID_KEY})
+
+    assert resp_over.status_code == 429, (
+        f"Expected 429 once the {limit}-request limit is exceeded, "
+        f"got {resp_over.status_code}: {resp_over.text}"
+    )
+    assert resp_over.headers.get("Retry-After") == "60"
+    assert resp_over.json() == {"error": {"code": "429", "message": "Rate limit exceeded"}}
+
+
+def test_rate_limit_is_isolated_per_key(monkeypatch):
+    """Two keys with different limits must not affect each other — one
+    key hitting its own limit must not block the other key's requests.
+
+    Validates: rate limiting is per-API-key, not global or per-user-wide.
+    """
+    key_a, limit_a = "key-a", 2
+    key_b, limit_b = "key-b", 10
+
+    async def _fake_resolve(key, client):
+        from api_gateway.services.key_resolver import KeyProfile
+
+        limits = {key_a: limit_a, key_b: limit_b}
+        if key not in limits:
+            return None
+        return KeyProfile(
+            user_id=f"user-{key}",
+            username=f"user-{key}",
+            department="poc",
+            roles=["developer"],
+            model_entitlements=[],
+            key_id=f"{key}-id",
+            rate_limit_override=limits[key],
+        )
+
+    with _rate_limit_client(monkeypatch, _fake_resolve) as client:
+        # Exhaust key_a's limit (2 requests).
+        for _ in range(limit_a):
+            resp = client.get("/v1/models", headers={"X-Api-Key": key_a})
+            assert resp.status_code == 200
+        resp_a_over = client.get("/v1/models", headers={"X-Api-Key": key_a})
+        assert resp_a_over.status_code == 429
+
+        # key_b must be completely unaffected by key_a's exhausted limit.
+        for i in range(1, limit_b + 1):
+            resp = client.get("/v1/models", headers={"X-Api-Key": key_b})
+            assert resp.status_code == 200, (
+                f"key_b request #{i}/{limit_b} expected 200, got {resp.status_code}: {resp.text}"
+            )
+
+
+def test_rate_limit_fails_open_when_redis_unavailable(monkeypatch):
+    """If Redis itself is unreachable, requests must still succeed (fail
+    open) rather than the Gateway going down or every request 500ing —
+    rate limiting is a cost/abuse control, not an auth boundary."""
+    monkeypatch.setenv("GATEWAY_API_KEY", VALID_KEY)
+    monkeypatch.setenv("DOWNSTREAM_SECURITY_URL", DOWNSTREAM_URL)
+    # Point at a port nothing is listening on so every Redis call fails fast.
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:1")
+
+    from api_gateway.config import get_settings
+    from api_gateway.main import create_app
     from starlette.testclient import TestClient
 
     get_settings.cache_clear()
     monkeypatch.setattr("api_gateway.middleware.auth.resolve_key", _fake_resolve_key)
 
-    # Clear any leftover timestamps from other tests.
-    RateLimitMiddleware._store.clear()
-
     app = create_app()
-
     with TestClient(app, raise_server_exceptions=False) as client:
-        # First 60 requests must all be 200.
-        for i in range(1, 61):
-            resp = client.get("/v1/models", headers={"X-Api-Key": VALID_KEY})
-            assert resp.status_code == 200, (
-                f"Request #{i}/60 expected 200, got {resp.status_code}: {resp.text}"
-            )
+        resp = client.get("/v1/models", headers={"X-Api-Key": VALID_KEY})
 
-        # 61st request must be rate-limited.
-        resp_61 = client.get("/v1/models", headers={"X-Api-Key": VALID_KEY})
-
-    assert resp_61.status_code == 429, (
-        f"Expected 429 on request #61, got {resp_61.status_code}: {resp_61.text}"
-    )
-
-    retry_after = resp_61.headers.get("Retry-After", "")
-    assert retry_after == "60", (
-        f"Expected Retry-After header == '60', got {retry_after!r}"
-    )
-
-    body = resp_61.json()
-    assert body == {"error": {"code": "429", "message": "Rate limit exceeded"}}, (
-        f"Unexpected 429 body: {body!r}"
+    assert resp.status_code == 200, (
+        f"Expected 200 (fail open) when Redis is unreachable, "
+        f"got {resp.status_code}: {resp.text}"
     )
 
     get_settings.cache_clear()

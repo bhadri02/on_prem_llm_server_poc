@@ -187,7 +187,7 @@ services:
       DOWNSTREAM_ROUTER_URL: "http://router:8082"
       INJECTION_PATTERNS_PATH: "injection_patterns.yaml"
       PII_ENABLED: "true"
-      ROUTER_TIMEOUT_SECONDS: "120"
+      ROUTER_TIMEOUT_SECONDS: "600"
     healthcheck:
       <<: *python-healthcheck
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health')"]
@@ -212,7 +212,7 @@ services:
       POLICY_MATRIX_PATH: "policy_matrix.yaml"
       CACHE_URL: "http://cache:8086"
       INFERENCE_ADAPTER_URL: "http://inference-adapter:8087"
-      INFERENCE_TIMEOUT_SECONDS: "120"
+      INFERENCE_TIMEOUT_SECONDS: "600"
       ADMIN_PORTAL_URL: "http://admin-portal:8084"
       ADMIN_PORTAL_INTERNAL_KEY: ${ADMIN_PORTAL_INTERNAL_KEY}
     volumes:
@@ -268,7 +268,7 @@ services:
       LOG_LEVEL: INFO
       OLLAMA_BASE_URL: "http://ollama:11434"
       DEFAULT_MODEL: ${OLLAMA_DEFAULT_MODEL:-llama3.2:3b}
-      OLLAMA_TIMEOUT_SECONDS: "120"
+      OLLAMA_TIMEOUT_SECONDS: "600"
       MODEL_REGISTRY_URL: "http://model-registry:5000"
       REGISTRY_API_KEY: ${REGISTRY_API_KEY}
     healthcheck:
@@ -304,15 +304,17 @@ services:
         condition: service_healthy
       admin-portal:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       LOG_LEVEL: INFO
       GATEWAY_API_KEY: ${GATEWAY_API_KEY}
       DOWNSTREAM_SECURITY_URL: "http://security-layer:8081"
-      DOWNSTREAM_TIMEOUT_SECONDS: "120"
+      DOWNSTREAM_TIMEOUT_SECONDS: "600"
       ADMIN_PORTAL_URL: "http://admin-portal:8084"
       ADMIN_PORTAL_INTERNAL_KEY: ${ADMIN_PORTAL_INTERNAL_KEY}
       KEY_CACHE_TTL_SECONDS: "30"
-      RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-60}
+      REDIS_URL: "redis://redis:6379"
       RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
     ports:
       # Published directly so /v1/chat/completions is reachable without going

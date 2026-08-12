@@ -35,11 +35,17 @@ class Settings(BaseSettings):
     # env: METRICS_PORT — default 9090
     metrics_port: int = 9090
 
-    # env: RATE_LIMIT_REQUESTS — default 60 requests per window
-    rate_limit_requests: int = 60
-
-    # env: RATE_LIMIT_WINDOW_SECONDS — default 60 second window
+    # env: RATE_LIMIT_WINDOW_SECONDS — default 60 second window. There is no
+    # global request-count setting: every key carries its own rate_limit_rpm
+    # (admin_portal, resolved via /portal/keys/resolve) — this window length
+    # is the only rate-limit-shaped thing that's actually platform-wide,
+    # since "rpm" only means something once "per what span" is fixed.
     rate_limit_window_seconds: int = 60
+
+    # env: REDIS_URL — backs RateLimitMiddleware's per-key counters. Redis
+    # (not in-process memory) so the limit is enforced correctly across
+    # multiple api_gateway replicas, not per-replica.
+    redis_url: str = "redis://redis:6379"
 
     # env: DOWNSTREAM_TIMEOUT — default 10.0 seconds
     downstream_timeout_seconds: float = 10.0

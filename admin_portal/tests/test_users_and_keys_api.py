@@ -279,6 +279,65 @@ class TestApiKeyLifecycle:
         assert r.status_code == 200
         assert r.json()["roles"] == ["analyst"]
 
+    @pytest.mark.asyncio
+    async def test_key_created_without_rate_limit_gets_concrete_default(self, client):
+        """rate_limit_rpm is no longer nullable — a key created without one
+        specified must still get a real, concrete value (not None), and
+        that value must be what /keys/resolve hands the API Gateway too."""
+        from admin_portal.db.models import DEFAULT_RATE_LIMIT_RPM
+
+        r = await client.post("/portal/users/", json={"username": "henry", "roles": ["developer"]})
+        user_id = r.json()["user_id"]
+
+        r = await client.post(f"/portal/users/{user_id}/keys", json={"label": "no-limit-specified"})
+        assert r.status_code == 201
+        created = r.json()
+        assert created["rate_limit_rpm"] == DEFAULT_RATE_LIMIT_RPM
+
+        r = await client.get(
+            "/portal/keys/resolve",
+            params={"key": created["raw_key"]},
+            headers={"X-Portal-Internal-Key": "test-internal-key"},
+        )
+        assert r.status_code == 200
+        assert r.json()["rate_limit_override"] == DEFAULT_RATE_LIMIT_RPM
+
+    @pytest.mark.asyncio
+    async def test_patch_key_rate_limit_changes_the_effective_limit(self, client):
+        r = await client.post("/portal/users/", json={"username": "iris", "roles": ["developer"]})
+        user_id = r.json()["user_id"]
+
+        r = await client.post(f"/portal/users/{user_id}/keys", json={"label": "agentic-workload"})
+        key_id = r.json()["key_id"]
+        raw_key = r.json()["raw_key"]
+
+        r = await client.patch(
+            f"/portal/users/{user_id}/keys/{key_id}/rate-limit",
+            json={"rate_limit_rpm": 500},
+        )
+        assert r.status_code == 200
+        assert r.json()["rate_limit_rpm"] == 500
+
+        r = await client.get(
+            "/portal/keys/resolve",
+            params={"key": raw_key},
+            headers={"X-Portal-Internal-Key": "test-internal-key"},
+        )
+        assert r.json()["rate_limit_override"] == 500
+
+    @pytest.mark.asyncio
+    async def test_patch_key_rate_limit_rejects_non_positive_value(self, client):
+        r = await client.post("/portal/users/", json={"username": "jack", "roles": ["developer"]})
+        user_id = r.json()["user_id"]
+        r = await client.post(f"/portal/users/{user_id}/keys", json={})
+        key_id = r.json()["key_id"]
+
+        r = await client.patch(
+            f"/portal/users/{user_id}/keys/{key_id}/rate-limit",
+            json={"rate_limit_rpm": 0},
+        )
+        assert r.status_code == 422
+
 
 # ---------------------------------------------------------------------------
 # /portal/roles/* (Phase 3, read-only)

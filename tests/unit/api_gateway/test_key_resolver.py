@@ -26,7 +26,7 @@ _VALID_BODY = {
     "roles": ["developer"],
     "model_entitlements": [],
     "key_id": "k1",
-    "rate_limit_override": None,
+    "rate_limit_override": 60,
 }
 
 
@@ -114,6 +114,31 @@ async def test_admin_portal_timeout_raises_unavailable():
 @respx.mock
 async def test_unexpected_status_raises_unavailable():
     respx.get(_RESOLVE_URL).mock(return_value=httpx.Response(500))
+
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(KeyResolverUnavailable):
+            await resolve_key("some-key", client)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_missing_rate_limit_override_raises_unavailable():
+    """rate_limit_override is required (every key has a concrete per-key
+    limit now, no global fallback) — a resolve response missing it entirely
+    must fail closed like any other malformed body, not silently default."""
+    body = {k: v for k, v in _VALID_BODY.items() if k != "rate_limit_override"}
+    respx.get(_RESOLVE_URL).mock(return_value=httpx.Response(200, json=body))
+
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(KeyResolverUnavailable):
+            await resolve_key("some-key", client)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_null_rate_limit_override_raises_unavailable():
+    body = {**_VALID_BODY, "rate_limit_override": None}
+    respx.get(_RESOLVE_URL).mock(return_value=httpx.Response(200, json=body))
 
     async with httpx.AsyncClient() as client:
         with pytest.raises(KeyResolverUnavailable):

@@ -5,17 +5,18 @@ Integration tests for the API Gateway POST /v1/chat/completions endpoint.
 
 Covers task 9.1:
   Test 1 — Non-streaming path: full OpenAI JSON response shape
-  Test 2 — Streaming path: SSE chunks proxied correctly
+  Test 2 — Streaming path: completed response framed as one SSE chunk
   Test 3 — Downstream timeout → HTTP 502
   Test 4 — Full middleware pipeline emits audit events in correct order
 
 Strategy
 --------
-- Uses ``starlette.testclient.TestClient`` (sync) for tests 1, 3, and 4.
-- Uses ``httpx.AsyncClient`` with ``ASGITransport`` for test 2 (streaming).
-- ``api_gateway.routers.chat.forward_to_security`` is patched for non-streaming
-  and error path tests. The streaming path patches ``httpx.AsyncClient.stream``.
-- ``RateLimitMiddleware._store`` is cleared between tests to prevent leakage.
+- Uses ``starlette.testclient.TestClient`` (sync) for all tests, including
+  streaming — the streaming path calls the same ``forward_to_security()``
+  as non-streaming (nothing downstream produces incremental tokens), so it
+  is mocked the same way rather than needing a real streamed httpx response.
+- ``app.state.redis`` is swapped for fakeredis so RateLimitMiddleware's
+  per-key counters are isolated and deterministic between tests.
 - ``api_gateway.config.get_settings`` lru_cache is cleared and env vars are
   set via monkeypatch for each test.
 
@@ -26,12 +27,9 @@ from __future__ import annotations
 
 import json
 import uuid
-from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-import httpx
 import pytest
-from httpx import ASGITransport, AsyncClient
 from starlette.testclient import TestClient
 
 from api_gateway.config import get_settings
@@ -102,15 +100,6 @@ def clear_api_gateway_settings_cache():
 
 
 @pytest.fixture(autouse=True)
-def clear_rate_limit_store():
-    """Reset RateLimitMiddleware class-level store between tests."""
-    from api_gateway.middleware.rate_limit import RateLimitMiddleware
-    RateLimitMiddleware._store.clear()
-    yield
-    RateLimitMiddleware._store.clear()
-
-
-@pytest.fixture(autouse=True)
 def stub_key_resolver(monkeypatch):
     """Stub identity resolution (Phase 2 — RBAC + per-user API keys).
 
@@ -132,7 +121,7 @@ def stub_key_resolver(monkeypatch):
                 roles=["developer"],
                 model_entitlements=[],
                 key_id="test-key-id",
-                rate_limit_override=None,
+                rate_limit_override=60,
             )
         return None
 
@@ -150,12 +139,19 @@ def env_vars(monkeypatch):
 
 @pytest.fixture
 def test_client(env_vars):
-    """Return a sync TestClient backed by a freshly created API Gateway app."""
+    """Return a sync TestClient backed by a freshly created API Gateway app.
+
+    Swaps app.state.redis for fakeredis after the lifespan starts, so
+    RateLimitMiddleware's per-key counters are fast and deterministic here
+    regardless of whether a real Redis happens to be reachable in this
+    environment (these tests aren't exercising rate limiting itself).
+    """
+    import fakeredis.aioredis
+
     from api_gateway.main import create_app
     app = create_app()
-    # Provide a real (but unused) AsyncClient on app.state so the lifespan
-    # does not need to run.  TestClient will trigger lifespan automatically.
     with TestClient(app, raise_server_exceptions=True) as client:
+        app.state.redis = fakeredis.aioredis.FakeRedis(decode_responses=False)
         yield client
 
 
@@ -240,62 +236,98 @@ def test_non_streaming_full_openai_response_shape(test_client):
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — Streaming path: SSE chunks proxied correctly
+# Test 1b — Authorization: Bearer accepted as an alternative to X-Api-Key
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.anyio
-async def test_streaming_sse_chunks_proxied(env_vars):
-    """POST /v1/chat/completions (stream=true) proxies SSE chunks downstream.
+def test_authorization_bearer_header_accepted_as_alternative_to_api_key(test_client):
+    """POST /v1/chat/completions authenticates via 'Authorization: Bearer <key>',
+    with no X-Api-Key header present at all — added so standard OpenAI-compatible
+    clients/SDKs (which send Bearer by default) can call this endpoint directly.
+    """
+    mock_imf = _make_imf_document()
 
-    Uses AsyncClient + ASGITransport so the streaming path can be exercised.
-    Patches ``httpx.AsyncClient.stream`` to yield controlled SSE byte chunks.
+    with patch(
+        "api_gateway.routers.chat.forward_to_security",
+        new=AsyncMock(return_value=mock_imf),
+    ):
+        response = test_client.post(
+            "/v1/chat/completions",
+            json=VALID_REQUEST_BODY,
+            headers={"Authorization": f"Bearer {TEST_API_KEY}"},
+        )
+
+    assert response.status_code == 200, (
+        f"Expected HTTP 200 via Bearer auth, got {response.status_code}: {response.text}"
+    )
+    assert response.json().get("model") == "llama3"
+
+
+def test_x_api_key_takes_precedence_over_authorization_bearer(test_client):
+    """When both headers are present, X-Api-Key wins (checked first) —
+    a bogus Bearer token alongside a valid X-Api-Key must still authenticate.
+    """
+    mock_imf = _make_imf_document()
+
+    with patch(
+        "api_gateway.routers.chat.forward_to_security",
+        new=AsyncMock(return_value=mock_imf),
+    ):
+        response = test_client.post(
+            "/v1/chat/completions",
+            json=VALID_REQUEST_BODY,
+            headers={**VALID_HEADERS, "Authorization": "Bearer not-a-real-key"},
+        )
+
+    assert response.status_code == 200, (
+        f"Expected HTTP 200 (X-Api-Key should win), got {response.status_code}: {response.text}"
+    )
+
+
+def test_missing_both_auth_headers_returns_401(test_client):
+    """No X-Api-Key and no Authorization header at all -> 401, unchanged behavior."""
+    response = test_client.post(
+        "/v1/chat/completions",
+        json=VALID_REQUEST_BODY,
+    )
+    assert response.status_code == 401
+
+
+def test_malformed_authorization_header_without_bearer_prefix_returns_401(test_client):
+    """An Authorization header that isn't 'Bearer <token>' shaped (e.g. 'Basic ...')
+    must not be treated as a key — falls through to the existing 401 path."""
+    response = test_client.post(
+        "/v1/chat/completions",
+        json=VALID_REQUEST_BODY,
+        headers={"Authorization": f"Basic {TEST_API_KEY}"},
+    )
+    assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Test 2 — Streaming path: completed response framed as one SSE chunk
+# ---------------------------------------------------------------------------
+
+
+def test_streaming_returns_single_sse_chunk_then_done(test_client):
+    """POST /v1/chat/completions (stream=true) uses the same
+    forward_to_security() call as the non-streaming path (nothing
+    downstream produces incremental tokens), then frames the one
+    completed response as a single ``chat.completion.chunk`` SSE event
+    followed by ``data: [DONE]``.
 
     Validates: Requirements 5.1, 7.4, 9.5
     """
-    # SSE chunks the mock downstream will yield
-    sse_chunks = [
-        b"data: hello\n\n",
-        b"data: world\n\n",
-        b"data: [DONE]\n\n",
-    ]
-
-    # Build a mock async context manager that yields a mock response whose
-    # aiter_bytes() produces our fixed SSE chunks.
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-
-    async def _aiter_bytes():
-        for chunk in sse_chunks:
-            yield chunk
-
-    mock_response.aiter_bytes = _aiter_bytes
-
-    @asynccontextmanager
-    async def _mock_stream(*args, **kwargs):
-        yield mock_response
-
-    from api_gateway.main import create_app
-    app = create_app()
-    # Pre-populate app.state.http_client so the route handler can access it
-    # without the lifespan running (ASGITransport does not run lifespan).
-    app.state.http_client = httpx.AsyncClient()
-
-    with patch.object(httpx.AsyncClient, "stream", _mock_stream):
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-        ) as client:
-            response = await client.post(
-                "/v1/chat/completions",
-                json={
-                    "model": "llama3",
-                    "messages": [{"role": "user", "content": "hello"}],
-                    "stream": True,
-                },
-                headers=VALID_HEADERS,
-            )
-    await app.state.http_client.aclose()
+    mock_imf = _make_imf_document(content="Hello from the model")
+    with patch(
+        "api_gateway.routers.chat.forward_to_security",
+        new=AsyncMock(return_value=mock_imf),
+    ):
+        response = test_client.post(
+            "/v1/chat/completions",
+            json={**VALID_REQUEST_BODY, "stream": True},
+            headers=VALID_HEADERS,
+        )
 
     assert response.status_code == 200, (
         f"Expected HTTP 200, got {response.status_code}: {response.text}"
@@ -306,11 +338,23 @@ async def test_streaming_sse_chunks_proxied(env_vars):
         f"Content-Type must contain 'text/event-stream', got {content_type!r}"
     )
 
-    # Verify the proxied chunks appear in the response body
-    body_bytes = response.content
-    assert b"data: hello\n\n" in body_bytes, "Response body must contain 'data: hello\\n\\n'"
-    assert b"data: world\n\n" in body_bytes, "Response body must contain 'data: world\\n\\n'"
-    assert b"data: [DONE]\n\n" in body_bytes, "Response body must terminate with 'data: [DONE]\\n\\n'"
+    body_text = response.text
+    assert body_text.endswith("data: [DONE]\n\n"), (
+        f"Response body must terminate with 'data: [DONE]\\n\\n', got: {body_text!r}"
+    )
+
+    data_lines = [
+        line[len("data: "):]
+        for line in body_text.split("\n\n")
+        if line.startswith("data: ") and line[len("data: "):] != "[DONE]"
+    ]
+    assert len(data_lines) == 1, f"Expected exactly one data event, got: {data_lines!r}"
+
+    chunk = json.loads(data_lines[0])
+    assert chunk["object"] == "chat.completion.chunk"
+    assert chunk["choices"][0]["delta"]["content"] == "Hello from the model"
+    assert chunk["choices"][0]["delta"]["role"] == "assistant"
+    assert chunk["choices"][0]["finish_reason"] == "stop"
 
 
 # ---------------------------------------------------------------------------

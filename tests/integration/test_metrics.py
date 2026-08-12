@@ -36,7 +36,6 @@ import pytest
 from starlette.testclient import TestClient
 
 from api_gateway.config import get_settings
-from api_gateway.middleware.rate_limit import RateLimitMiddleware
 from api_gateway.schemas.imf import (
     IMFCache,
     IMFDocument,
@@ -147,20 +146,20 @@ _TEST_API_KEY = "test-metrics-key"
 def api_gateway_client(monkeypatch):
     """Synchronous TestClient backed by a fresh ``create_app()`` instance.
 
-    Sets the required env vars, clears ``get_settings`` LRU cache, and clears
-    ``RateLimitMiddleware._store`` to prevent bleed between tests.
+    Sets the required env vars, clears ``get_settings`` LRU cache, and swaps
+    app.state.redis for fakeredis so RateLimitMiddleware's per-key counters
+    are isolated and deterministic between tests.
 
     Yields:
         A ``starlette.testclient.TestClient`` wrapping the API Gateway app.
     """
+    import fakeredis.aioredis
+
     monkeypatch.setenv("GATEWAY_API_KEY", _TEST_API_KEY)
     monkeypatch.setenv("DOWNSTREAM_SECURITY_URL", "http://security-layer:8081")
 
     # Clear the settings LRU cache so the new env vars are picked up
     get_settings.cache_clear()
-
-    # Clear rate-limit state so previous tests don't interfere
-    RateLimitMiddleware._store.clear()
 
     from api_gateway.main import create_app
 
@@ -169,11 +168,11 @@ def api_gateway_client(monkeypatch):
     # ``follow_redirects=True`` is the default for TestClient; set explicitly
     # so that GET /metrics (which Starlette redirects to /metrics/) is followed.
     with TestClient(app, raise_server_exceptions=True, follow_redirects=True) as client:
+        app.state.redis = fakeredis.aioredis.FakeRedis(decode_responses=False)
         yield client
 
     # Cleanup after test
     get_settings.cache_clear()
-    RateLimitMiddleware._store.clear()
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,7 @@ from admin_portal.schemas.keys import (
     ApiKeyCreated,
     ApiKeyModelsPatch,
     ApiKeyOut,
+    ApiKeyRateLimitPatch,
 )
 from admin_portal.schemas.users import (
     UserCreate,
@@ -265,6 +266,24 @@ async def patch_key_models(
     db.query(KeyModelEntitlement).filter_by(key_id=key_id).delete()
     for model_name in body.model_entitlements:
         db.add(KeyModelEntitlement(key_id=key_id, model_name=model_name))
+    db.commit()
+    db.refresh(key)
+    return _to_key_out(key)
+
+
+@router.patch("/users/{user_id}/keys/{key_id}/rate-limit", response_model=ApiKeyOut)
+async def patch_key_rate_limit(
+    user_id: str, key_id: str, body: ApiKeyRateLimitPatch, db: Session = Depends(get_db)
+) -> ApiKeyOut:
+    """Change a key's own request-per-minute limit.
+
+    Rate limiting is enforced entirely per-key (api_gateway's
+    RateLimitMiddleware reads only the resolved key's own rate_limit_rpm,
+    never a shared/global fallback), so this is the only way to raise or
+    lower a specific key's throughput after it's already been issued.
+    """
+    key = _get_key_or_404(db, user_id, key_id)
+    key.rate_limit_rpm = body.rate_limit_rpm
     db.commit()
     db.refresh(key)
     return _to_key_out(key)

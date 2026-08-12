@@ -16,9 +16,13 @@ Non-streaming path (task 7.3):
        Emit ``response_sent`` audit event (outcome="pass").
 
 Streaming path (task 7.4):
-    When payload.stream is True, open an httpx streaming connection to the
-    Security Layer and proxy the SSE byte stream back to the client via
-    FastAPI StreamingResponse (Content-Type: text/event-stream).
+    Uses the exact same forward_to_security(imf, client) call as the
+    non-streaming path — nothing downstream (Ollama/Anthropic) produces
+    incremental tokens, the full response always comes back in one piece.
+    When payload.stream is True, that one completed response is instead
+    framed as a single OpenAI ``chat.completion.chunk`` SSE event followed
+    by ``data: [DONE]`` (see sse_single_chunk()), rather than returned as a
+    plain JSON body.
     Emit ``response_sent`` audit event when the stream completes or errors.
 
 Validates: Requirements 1.1, 1.5, 1.6, 1.7, 4.1–4.13, 5.1–5.5,
@@ -27,8 +31,8 @@ Validates: Requirements 1.1, 1.5, 1.6, 1.7, 4.1–4.13, 5.1–5.5,
 
 from __future__ import annotations
 
+import json
 import time
-import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -37,7 +41,6 @@ from fastapi import APIRouter, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from api_gateway.config import get_settings
 from api_gateway.schemas.openai import OpenAIChatRequest
 from api_gateway.services.audit import build_audit_event, emit_audit_event
 from api_gateway.services.downstream import DownstreamError, forward_to_security
@@ -77,59 +80,43 @@ async def validation_exception_handler(
 # ---------------------------------------------------------------------------
 # Streaming helper
 # ---------------------------------------------------------------------------
-async def stream_generator(
-    resp: httpx.Response,
-    request_id: str,
-    method: str,
-    path: str,
-    start_time: float,
-) -> AsyncGenerator[bytes, None]:
-    """Proxy SSE bytes from the downstream response to the client.
+async def sse_single_chunk(response_body: dict) -> AsyncGenerator[bytes, None]:
+    """Emit a completed OpenAI chat-completion dict as one SSE stream.
 
-    Yields each raw byte chunk received from the Security Layer directly
-    to the client without accumulating the full body.  Emits a
-    ``response_sent`` audit event when the stream concludes (pass or error).
+    Nothing in this pipeline generates tokens incrementally — Ollama and
+    Anthropic responses are both received in full before ``forward_to_security``
+    returns — so there is no real per-token data to stream. This sends the
+    complete response as a single ``chat.completion.chunk`` event (in the
+    ``choices[].delta`` shape SSE clients expect) followed by the ``[DONE]``
+    sentinel, which is enough for OpenAI-compatible SSE clients (e.g.
+    Continue.dev) to render the full answer at once rather than
+    token-by-token.
 
     Args:
-        resp:       The open :class:`httpx.Response` from the streaming call.
-        request_id: The ``request_id`` for audit correlation.
-        method:     HTTP method of the original request.
-        path:       URL path of the original request.
-        start_time: ``time.monotonic()`` timestamp recorded before the request
-                    was processed, used to compute ``latency_ms``.
+        response_body: The dict produced by ``serialize_response()``.
 
     Yields:
-        Raw bytes chunks as received from downstream.
+        Two byte chunks: the ``data: {...}`` event, then ``data: [DONE]``.
     """
-    try:
-        async for chunk in resp.aiter_bytes():
-            yield chunk
-        # Stream completed successfully
-        emit_audit_event(
-            build_audit_event(
-                request_id=request_id,
-                event_type="response_sent",
-                method=method,
-                path=path,
-                status_code=200,
-                latency_ms=(time.monotonic() - start_time) * 1000,
-                outcome="pass",
-            )
-        )
-    except Exception:
-        # Downstream error mid-stream — close connection and audit
-        emit_audit_event(
-            build_audit_event(
-                request_id=request_id,
-                event_type="response_sent",
-                method=method,
-                path=path,
-                status_code=502,
-                latency_ms=(time.monotonic() - start_time) * 1000,
-                outcome="error",
-            )
-        )
-        return
+    choice = response_body["choices"][0]
+    chunk = {
+        "id": response_body["id"],
+        "object": "chat.completion.chunk",
+        "created": response_body["created"],
+        "model": response_body["model"],
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "content": choice["message"]["content"],
+                },
+                "finish_reason": choice["finish_reason"],
+            }
+        ],
+    }
+    yield f"data: {json.dumps(chunk)}\n\n".encode()
+    yield b"data: [DONE]\n\n"
 
 
 # ---------------------------------------------------------------------------
@@ -188,59 +175,10 @@ async def chat_completions(
     )
 
     # ------------------------------------------------------------------
-    # Step 3 — Streaming path
-    # ------------------------------------------------------------------
-    if payload.stream:
-        settings = get_settings()
-        url = f"{settings.downstream_security_url}/security/check"
-
-        try:
-            # Open the streaming connection; kept alive for the generator.
-            # The context manager is entered here; the response object (and
-            # the underlying connection) stay open while stream_generator
-            # is consuming bytes.
-            async with client.stream(
-                "POST",
-                url,
-                json=imf.model_dump(),
-                headers={"Content-Type": "application/json"},
-                timeout=settings.downstream_timeout_seconds,
-            ) as resp:
-                if resp.status_code != 200:
-                    emit_audit_event(
-                        build_audit_event(
-                            request_id=request_id,
-                            event_type="response_sent",
-                            method=method,
-                            path=path,
-                            status_code=502,
-                            latency_ms=(time.monotonic() - start_time) * 1000,
-                            outcome="error",
-                        )
-                    )
-                    return JSONResponse(status_code=502, content=_ERROR_502)
-
-                return StreamingResponse(
-                    content=stream_generator(resp, request_id, method, path, start_time),
-                    media_type="text/event-stream",
-                    status_code=200,
-                )
-        except (httpx.TimeoutException, httpx.ConnectError, httpx.RequestError):
-            emit_audit_event(
-                build_audit_event(
-                    request_id=request_id,
-                    event_type="response_sent",
-                    method=method,
-                    path=path,
-                    status_code=502,
-                    latency_ms=(time.monotonic() - start_time) * 1000,
-                    outcome="error",
-                )
-            )
-            return JSONResponse(status_code=502, content=_ERROR_502)
-
-    # ------------------------------------------------------------------
-    # Step 4 — Non-streaming path
+    # Step 3/4 — Forward to Security Layer (same call for both streaming
+    # and non-streaming requests — nothing downstream produces incremental
+    # tokens, so "streaming" only changes how the one completed result is
+    # framed on the way back out; see sse_single_chunk()).
     # ------------------------------------------------------------------
     try:
         imf_response = await forward_to_security(imf, client)
@@ -286,5 +224,12 @@ async def chat_completions(
             outcome="pass",
         )
     )
+
+    if payload.stream:
+        return StreamingResponse(
+            content=sse_single_chunk(response_body),
+            media_type="text/event-stream",
+            status_code=200,
+        )
 
     return JSONResponse(status_code=200, content=response_body)

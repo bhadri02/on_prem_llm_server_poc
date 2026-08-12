@@ -25,6 +25,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 import httpx
+import redis.asyncio as aioredis
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -84,25 +85,28 @@ if settings.tracing_enabled:
 
 
 # ---------------------------------------------------------------------------
-# Lifespan — manage shared httpx.AsyncClient across requests
+# Lifespan — manage shared httpx.AsyncClient and Redis client across requests
 # ---------------------------------------------------------------------------
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Create and tear down the shared HTTP client.
+    """Create and tear down the shared HTTP and Redis clients.
 
-    On startup: instantiates ``httpx.AsyncClient`` and stores it on
-    ``app.state.http_client`` so route handlers can retrieve it via
-    ``request.app.state.http_client``.
+    On startup: instantiates ``httpx.AsyncClient`` (app.state.http_client)
+    and a ``redis.asyncio.Redis`` client (app.state.redis, backing
+    RateLimitMiddleware's per-key counters) so route handlers/middleware
+    can retrieve them via ``request.app.state.*``.
 
-    On shutdown: cleanly closes the client and its connection pool.
+    On shutdown: cleanly closes both clients and their connection pools.
     """
     app.state.http_client = httpx.AsyncClient()
+    app.state.redis = aioredis.from_url(settings.redis_url, decode_responses=False)
     try:
         yield
     finally:
         await app.state.http_client.aclose()
+        await app.state.redis.aclose()
 
 
 # ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@ implementation.
 |---|---|---|
 | Base path | `/portal/*` | `/v1/*` |
 | Default port | `8084` | `8080` |
-| Auth | **Session cookie** (`POST /portal/auth/login`) | **`X-Api-Key` header** |
+| Auth | **Session cookie** (`POST /portal/auth/login`) | **`X-Api-Key` header, or `Authorization: Bearer <key>`** |
 | What it's for | Login, chat proxy, users/roles/keys admin, model admin, audit/governance/metrics | The real OpenAI-compatible chat completion API |
 
 These are two separate services. A browser-based frontend needs a plan for
@@ -229,6 +229,12 @@ admin endpoints ([§5.3](#53-api-keys)) — the raw key value is shown **exactly
 once**, at creation time, and never retrievable again; your frontend must
 capture and display it to the admin immediately (e.g. a "copy this now,
 you won't see it again" dialog).
+
+`Authorization: Bearer <key>` works identically to `X-Api-Key` on every
+`/v1/*` endpoint — useful if you're integrating a standard OpenAI-compatible
+SDK or tool that sends Bearer by default rather than a custom header (e.g.
+IDE extensions like Continue.dev). If both headers are present on the same
+request, `X-Api-Key` is checked first and wins.
 
 ```
 GET /v1/models

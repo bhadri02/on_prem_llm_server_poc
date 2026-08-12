@@ -11,6 +11,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from admin_portal.db.models import DEFAULT_RATE_LIMIT_RPM
+
 
 class KeyResolveResponse(BaseModel):
     """Returned by GET /portal/keys/resolve to the API Gateway."""
@@ -21,14 +23,14 @@ class KeyResolveResponse(BaseModel):
     roles: list[str]
     model_entitlements: list[str] = Field(default_factory=list)
     key_id: str
-    rate_limit_override: int | None = None
+    rate_limit_override: int
 
 
 class ApiKeyCreate(BaseModel):
     label: str | None = None
     model_entitlements: list[str] = Field(default_factory=list)
     expires_at: datetime | None = None
-    rate_limit_rpm: int | None = None
+    rate_limit_rpm: int = Field(default=DEFAULT_RATE_LIMIT_RPM, gt=0)
 
 
 class ApiKeyOut(BaseModel):
@@ -37,7 +39,7 @@ class ApiKeyOut(BaseModel):
     label: str | None = None
     status: str
     expires_at: datetime | None = None
-    rate_limit_rpm: int | None = None
+    rate_limit_rpm: int
     created_at: datetime
     last_used_at: datetime | None = None
     model_entitlements: list[str] = Field(default_factory=list)
@@ -51,6 +53,10 @@ class ApiKeyCreated(ApiKeyOut):
 
 class ApiKeyModelsPatch(BaseModel):
     model_entitlements: list[str]
+
+
+class ApiKeyRateLimitPatch(BaseModel):
+    rate_limit_rpm: int = Field(gt=0)
 
 
 class ApiKeyWithOwner(ApiKeyOut):
