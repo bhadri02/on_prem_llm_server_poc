@@ -4,12 +4,19 @@ End-to-end procedure for deploying the whole platform — all 9 backend
 services, the Portal UI, Postgres, Redis, and Ollama — as Docker containers
 on a single on-prem server, using `docker-compose.prod.yml`.
 
-This is a different path from `scripts/deploy.sh` (Kubernetes/Helm). That
-path exists and is documented in `scripts/README.md`, but its Helm charts
-predate several backend features shipped since (RBAC, Postgres, the
-governance endpoints) and are not currently in sync with the application
-code — deploying through it today would crash-loop several pods on missing
-config. This guide is the one that matches the code as it stands.
+Every step below is automated by `scripts/deploy-onprem.sh` — an
+interactive script you can copy to a fresh server and run standalone (it
+clones this repo itself). This guide is still worth reading for the
+step-by-step detail, day-2 operations, and troubleshooting the script
+doesn't cover.
+
+There used to be a separate Kubernetes/Helm deployment path
+(`scripts/deploy.sh`). Its charts predate several backend features shipped
+since (RBAC, Postgres, the governance endpoints) and were never brought
+back in sync — deploying through it would have crash-looped several pods
+on missing config, so that script (and its Helm charts' supporting
+tooling) has been removed. This guide is the one that matches the code as
+it stands.
 
 ---
 

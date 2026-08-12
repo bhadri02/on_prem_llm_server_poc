@@ -145,22 +145,13 @@ cd llm-platform && pytest tests/helm -c pytest.ini
 
 `admin_portal` tests that hit its DB-backed routers (`admin_portal/tests/test_users_and_keys_api.py`) override the `get_db` FastAPI dependency with a temp-file SQLite session per test — they never touch the real Postgres `DATABASE_URL`.
 
-## Kubernetes / Helm deployment
+## Kubernetes / Helm deployment (stale, not currently deployable)
 
-`llm-platform/` is the umbrella Helm chart (10 sub-charts under `llm-platform/charts/`, one per service, mirroring the local topology plus `observability` for the kube-prometheus-stack). Deployment is scripted end-to-end:
+`llm-platform/` is the umbrella Helm chart (10 sub-charts under `llm-platform/charts/`, one per service, mirroring the local topology plus `observability` for the kube-prometheus-stack). **These charts are stale relative to the current application code** — they predate the RBAC/Postgres/policy-matrix/governance work documented elsewhere in this file — e.g. `router`'s chart has `env: {}` (none of its now-required settings like `MODEL_MATRIX_PATH`, `ADMIN_PORTAL_INTERNAL_KEY`, `POLICY_MATRIX_PATH` are wired), `admin-portal`'s chart has no `DATABASE_URL`/`ADMIN_PORTAL_INTERNAL_KEY` at all, there is no Postgres dependency anywhere in the chart tree (only `cache`'s bundled Redis), and there is no `portal_ui` chart despite it having a working `Dockerfile` — the `admin-portal` chart's Ingress claims `llm-portal.local` for itself (the raw API, no UI). Deploying this today would crash-loop most pods on missing config.
 
-```bash
-./scripts/deploy.sh              # preflight → ingress-nginx → namespace/secrets → helm install (umbrella + observability) → wait for rollout → wait for Ollama model-pull job
-./scripts/deploy.sh --dry-run    # print every kubectl/helm command without executing
-./scripts/deploy.sh --uninstall  # tear down both helm releases + namespaces
-./scripts/smoke-test.sh [--namespace ns] [--host llm-poc.local]   # 5 checks: health, e2e chat, audit trail, cache hit, injection block
-```
+The scripts that used to automate this path (`scripts/deploy.sh`, `scripts/build-and-push-all.ps1`, `scripts/test-connectivity.py`, `scripts/run-demos.ps1`) have been **removed** — they had no working target to deploy to. If this path is ever revived, the charts need to be brought back in sync with the current app first; `git log` has the removed scripts' history if that work happens.
 
-Full details (capacity requirements, cluster-IP lookup per k3s/kind/minikube, troubleshooting CrashLoopBackOff/pending pods) are in `scripts/README.md` — read it before touching `deploy.sh`, `smoke-test.sh`, or the chart values, rather than re-deriving the deployment steps.
-
-Model catalog seeding (`seed/models.json`) is **not** auto-loaded — the Model Registry starts with an empty `[]` unless the seed file is manually copied onto its PVC before/after first deploy (see `seed/README.md`).
-
-**Known gap, not fixed: these Helm charts are stale relative to the current application code.** They predate the RBAC/Postgres/policy-matrix/governance work documented elsewhere in this file — e.g. `router`'s chart has `env: {}` (none of its now-required settings like `MODEL_MATRIX_PATH`, `ADMIN_PORTAL_INTERNAL_KEY`, `POLICY_MATRIX_PATH` are wired), `admin-portal`'s chart has no `DATABASE_URL`/`ADMIN_PORTAL_INTERNAL_KEY` at all, there is no Postgres dependency anywhere in the chart tree (only `cache`'s bundled Redis), and there is no `portal_ui` chart despite it having a working `Dockerfile` — the `admin-portal` chart's Ingress claims `llm-portal.local` for itself (the raw API, no UI). Deploying via `./scripts/deploy.sh` today would crash-loop most pods on missing config. **`docs/DEPLOYMENT.md`** documents a Docker Compose path (`docker-compose.prod.yml`) instead, built and verified against the current code — use that for a real on-prem deployment until these charts are brought back in sync.
+**`docs/DEPLOYMENT.md`** (automated by `scripts/deploy-onprem.sh`) documents a Docker Compose path (`docker-compose.prod.yml`) instead, built and verified against the current code — use that for a real on-prem deployment. See `scripts/README.md` for what every current script in that directory does.
 
 ## Conventions to preserve when editing a service
 

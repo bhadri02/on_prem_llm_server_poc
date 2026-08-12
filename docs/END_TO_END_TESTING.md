@@ -342,32 +342,30 @@ not for validating the new Phase 5 surface.
 
 ---
 
-## 9. Kubernetes deployment E2E
+## 9. Docker Compose deployment E2E
 
-```bash
-./scripts/deploy.sh                # preflight → helm install → wait for rollout
-./scripts/deploy.sh --dry-run      # preview commands without executing
+The Kubernetes/Helm deployment path (and the `deploy.sh`/`run-demos.ps1`
+scripts that automated it) has been removed — those charts are stale
+relative to the current app and were not deployable (see `CLAUDE.md`'s
+"Kubernetes / Helm deployment" section). `docs/DEPLOYMENT.md`'s Docker
+Compose path, automated by `scripts/deploy-onprem.sh`, is the current,
+verified deployment path — that script's own Step 8 runs the equivalent
+E2E checks (portal reachable, a real chat completion, the injection
+guardrail blocking a malicious prompt) against the live stack it just
+brought up.
 
+`scripts/smoke-test.ps1` still works against any already-running
+deployment (local native or Docker Compose) for an ad-hoc check:
+
+```powershell
 powershell -ExecutionPolicy Bypass -File scripts/smoke-test.ps1 `
-  -BaseUrl "http://llm-poc.local"  -ApiKey "poc-secret-key"
+  -BaseUrl "http://localhost" -ApiKey "<your GATEWAY_API_KEY>"
 ```
-`smoke-test.ps1` runs 7 checks end-to-end against a live cluster: health,
-metrics, auth rejection (missing/wrong key), security blocks (injection,
-jailbreak), a real chat completion, cache-hit timing, and model registry
-listing. Non-zero exit means at least one check failed — it prints a
-pass/fail table and points at `kubectl logs` for the failing pod.
 
-`scripts/run-demos.ps1` runs the same 5 narrative demo scenarios
-(normal chat / injection block / PII masking / cache hit / audit trail) used
-for live walkthroughs — useful for a guided demo, not for CI-style pass/fail.
-
-Full cluster-specific details (capacity requirements, per-distro cluster-IP
-lookup, `CrashLoopBackOff` troubleshooting) are in `scripts/README.md`.
-
-Neither `smoke-test.ps1` nor `run-demos.ps1` currently exercises the Phase 5
-surface (RBAC denial paths, per-user keys, Anthropic dispatch, or the new
-admin endpoints) — for those against a real cluster, port-forward
-`admin_portal` and `api_gateway` and adapt the `curl` commands from §4–§7.
+It does not currently exercise the Phase 5 surface (RBAC denial paths,
+per-user keys, Anthropic dispatch, or the newer admin endpoints) — for
+those, adapt the `curl` commands from §4–§7 directly against the running
+`admin_portal`/`api_gateway`.
 
 ---
 
