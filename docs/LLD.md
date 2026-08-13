@@ -670,10 +670,20 @@ See §5.3 — no SSO/OIDC, no CSRF token, no MFA, session-key accumulation.
 | `inference_adapter` | 8087 | 9090 |
 | `audit_store` | 9200 | 9090 |
 | `model_registry` | 5000 (5001 externally in local dev — 5000 reserved by Docker Desktop) | — |
-| `nginx` (Docker Compose) | 80 (configurable via `NGINX_PUBLIC_PORT`) | — |
 | Postgres | 5432 | — |
 | Redis | 6379 | — |
 | Ollama | 11434 | — |
+
+**Docker Compose host-published ports** (`docker-compose.prod.yml` — no in-stack reverse proxy; see `docs/DEPLOYMENT.md`'s "Fronting with your own existing nginx"):
+
+| Service | Host port |
+|---|---|
+| `api-gateway` | 8080 (fixed) |
+| `admin-portal` | 8084 (fixed) |
+| `portal-ui` | `${PORTAL_UI_PORT:-18080}` |
+
+Every other service in the Compose deployment is internal-only, reachable
+only from other containers on that compose network.
 
 ### 10.2 Full API contracts
 See `docs/API_INTEGRATION_GUIDE.md` — every endpoint, request/response shape, and error envelope, verified against current router/schema code.
