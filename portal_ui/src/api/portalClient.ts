@@ -28,16 +28,26 @@ import {
 // Internal helper
 // ---------------------------------------------------------------------------
 
+/**
+ * Reads a Response body exactly once as text, then attempts to parse it as
+ * JSON. Deliberately does NOT call res.json() and fall back to res.text() on
+ * failure — res.json() consumes the body stream even when JSON.parse throws,
+ * so a text() fallback after a failed json() always throws "body stream
+ * already read" and masks the real error.
+ */
+async function readErrorMessage(res: Response): Promise<string> {
+  const raw = await res.text();
+  try {
+    const body = JSON.parse(raw) as { message?: string };
+    return body.message ?? JSON.stringify(body);
+  } catch {
+    return raw;
+  }
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    let message: string;
-    try {
-      const body = await res.json() as { message?: string };
-      message = body.message ?? JSON.stringify(body);
-    } catch {
-      message = await res.text();
-    }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, await readErrorMessage(res));
   }
   return res.json() as Promise<T>;
 }
@@ -145,14 +155,7 @@ export async function getModels(): Promise<{ models: ModelRecord[] }> {
   const res = await fetch("/portal/models");
   // Registry returns a raw array — wrap it in { models: [...] }
   if (!res.ok) {
-    let message: string;
-    try {
-      const body = await res.json() as { message?: string };
-      message = body.message ?? JSON.stringify(body);
-    } catch {
-      message = await res.text();
-    }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, await readErrorMessage(res));
   }
   const arr = await res.json() as ModelRecord[];
   return { models: arr };
@@ -318,14 +321,7 @@ export async function patchUserStatus(userId: string, status: "active" | "inacti
 export async function deactivateUser(userId: string): Promise<void> {
   const res = await fetch(`/portal/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
   if (!res.ok) {
-    let message: string;
-    try {
-      const body = (await res.json()) as { message?: string };
-      message = body.message ?? JSON.stringify(body);
-    } catch {
-      message = await res.text();
-    }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, await readErrorMessage(res));
   }
 }
 
