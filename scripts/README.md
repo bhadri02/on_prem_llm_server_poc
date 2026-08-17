@@ -53,6 +53,41 @@ For the full manual walkthrough (what to do if you want to run each step
 yourself, register a cloud model, day-2 operations, troubleshooting), see
 **`docs/DEPLOYMENT.md`**.
 
+### `deploy-onprem-existing-repo.sh`
+
+Same script as above, minus the clone step — for when you've already
+pulled the repo yourself (`git clone`/`git pull`, downloaded a zip, etc.)
+and want to deploy that exact checkout in place instead of having
+`deploy-onprem.sh` clone a fresh copy elsewhere. Run it **from inside**
+the checkout:
+
+```bash
+cd /path/to/your/checkout
+chmod +x scripts/deploy-onprem-existing-repo.sh
+./scripts/deploy-onprem-existing-repo.sh                # interactive — pulls latest, rebuilds, restarts
+./scripts/deploy-onprem-existing-repo.sh --no-pull      # deploy exactly what's on disk, don't touch git
+./scripts/deploy-onprem-existing-repo.sh --no-gpu       # skip GPU auto-detection
+./scripts/deploy-onprem-existing-repo.sh --skip-build   # images already built/loaded another way
+```
+
+This also doubles as the **redeploy script**: run it again any time new
+commits land on origin and it will `git fetch`/`git pull --ff-only` the
+current branch before rebuilding and restarting — that's the main reason
+this script exists separately from `deploy-onprem.sh`. If the checkout has
+local uncommitted changes when you re-run it (most commonly
+`docker-compose.prod.yml`, left modified by a previous run's GPU-enable
+step), it detects that, shows you what's dirty, and asks whether to stash
+them for the pull and re-apply afterward, skip the pull and keep them, or
+abort — it never silently discards local changes. Pass `--no-pull` to skip
+git entirely and just rebuild/restart whatever is currently checked out.
+
+Aside from step 2 (repo verification instead of cloning) and the new pull
+step, this runs the identical `.env.prod` setup/GPU-detection/build/
+start/verify/summary flow as `deploy-onprem.sh`. The two scripts
+intentionally are NOT refactored into a shared library — `deploy-onprem.sh`'s
+whole point is being a single file you can `curl` onto a server that has
+no repo yet, so if you change the shared deploy logic, update both files.
+
 ---
 
 ## Local development (Windows)

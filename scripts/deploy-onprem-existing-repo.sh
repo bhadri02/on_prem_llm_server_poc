@@ -1,36 +1,32 @@
 #!/usr/bin/env bash
 #
-# scripts/deploy-onprem.sh
+# scripts/deploy-onprem-existing-repo.sh
 #
-# Interactive fresh-server bootstrap + deploy script for the on-prem Docker
-# Compose stack described in docs/DEPLOYMENT.md — this script automates
-# exactly the manual steps documented there, nothing more.
+# Same deploy as scripts/deploy-onprem.sh, for the case where you already
+# pulled the repo yourself (git clone, git pull, downloaded a zip, whatever)
+# instead of letting that script clone it for you. Run this FROM INSIDE
+# the checkout — it deploys whatever is on disk right here, as-is.
 #
-# Distinct from scripts/deploy.sh, which targets the older Kubernetes/Helm
-# path — those charts are stale relative to the current app (see CLAUDE.md)
-# and are NOT what this script deploys.
+# Also doubles as the REDEPLOY script: run it again any time to pull the
+# latest commits from origin, rebuild, and restart with the new code (see
+# step 3 below). Pass --no-pull to skip that and just rebuild/restart
+# whatever is currently checked out, unchanged.
 #
-# Designed to be copied to a fresh server and run standalone, BEFORE the
-# repo exists there — it clones the repo itself as its first real step, so
-# you don't need a checkout in place to start. If you already have a
-# checkout and run it from inside one anyway, it still clones a fresh copy
-# into the target directory you choose (default /opt/llm-platform) — that
-# directory, not wherever you happened to run this from, becomes the
-# deployment.
-#
-# If you already pulled the repo yourself (git clone/pull, downloaded a
-# zip, etc.) and want to deploy that exact checkout in place instead of
-# having this script clone a fresh copy elsewhere, use
-# scripts/deploy-onprem-existing-repo.sh from inside that checkout instead.
-# The two scripts share the same .env.prod/GPU/build/verify logic — kept as
-# two standalone files instead of one sourcing a shared lib, since this
-# script's whole point is being a single file you can curl onto a server
-# that has no repo yet. Update both if you change that shared logic.
+# Everything from ".env.prod setup" onward is identical to deploy-onprem.sh:
+# GPU detection, build, start, health wait, verification, summary. These
+# two scripts are deliberately NOT refactored into a shared library —
+# deploy-onprem.sh is designed to be curled onto a fresh server as a single
+# standalone file before the repo exists there, and a sourced common file
+# would break that. If you change the shared logic in one, change it in
+# the other too.
 #
 # Usage:
-#   chmod +x deploy-onprem.sh
-#   ./deploy-onprem.sh [--no-gpu] [--skip-build]
+#   cd /path/to/your/checkout-of-on_prem_llm_server_poc
+#   chmod +x scripts/deploy-onprem-existing-repo.sh
+#   ./scripts/deploy-onprem-existing-repo.sh [--no-pull] [--no-gpu] [--skip-build]
 #
+#   --no-pull      Don't fetch/pull from origin — deploy exactly what's
+#                  already checked out on disk right now.
 #   --no-gpu       Skip GPU auto-detection even if an NVIDIA GPU is found.
 #   --skip-build   Skip `docker compose build` (use if images were already
 #                  built/loaded some other way, e.g. transferred via
@@ -38,14 +34,16 @@
 #
 set -euo pipefail
 
+NO_PULL=false
 NO_GPU=false
 SKIP_BUILD=false
 for arg in "$@"; do
   case "$arg" in
+    --no-pull) NO_PULL=true ;;
     --no-gpu) NO_GPU=true ;;
     --skip-build) SKIP_BUILD=true ;;
     -h|--help)
-      echo "Usage: $0 [--no-gpu] [--skip-build]"
+      echo "Usage: $0 [--no-pull] [--no-gpu] [--skip-build]"
       exit 0
       ;;
     *)
@@ -124,30 +122,82 @@ fi
 log "Prerequisites OK"
 
 # ---------------------------------------------------------------------------
-# 2. Clone the repository
+# 2. Verify we're actually standing inside a real checkout
 # ---------------------------------------------------------------------------
-log "Repository setup"
+log "Checking repository"
 
-REPO_URL=$(ask "GitHub repository URL to clone" "https://github.com/bhadri02/on_prem_llm_server_poc.git")
-REPO_REF=$(ask "Branch or tag to deploy" "connector")
-TARGET_DIR=$(ask "Directory to clone into" "/opt/llm-platform")
+[ -f docker-compose.prod.yml ] && [ -f .env.prod.example ] || die "docker-compose.prod.yml / .env.prod.example not found in $(pwd) — run this script from inside the repo checkout (cd into it first), or use scripts/deploy-onprem.sh if you want it to clone the repo for you."
 
-if [ -d "$TARGET_DIR/.git" ]; then
-  log "Repository already exists at $TARGET_DIR — fetching latest instead of re-cloning"
-  git -C "$TARGET_DIR" fetch origin
-  git -C "$TARGET_DIR" checkout "$REPO_REF"
-  git -C "$TARGET_DIR" pull origin "$REPO_REF"
-else
-  git clone --branch "$REPO_REF" "$REPO_URL" "$TARGET_DIR"
+log "Working in $(pwd)"
+if [ -d .git ]; then
+  echo "  git ref: $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown) @ $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 fi
 
-cd "$TARGET_DIR"
-log "Working in $(pwd) on branch/ref $REPO_REF"
+# ---------------------------------------------------------------------------
+# 3. Pull latest changes (this is what makes this script reusable to
+#    redeploy after new commits land on origin — run it again any time)
+# ---------------------------------------------------------------------------
+if [ "$NO_PULL" = true ]; then
+  log "Skipping git pull (--no-pull) — deploying exactly what's on disk"
+elif [ ! -d .git ]; then
+  warn "Not a git checkout (no .git directory) — can't pull. Skipping."
+else
+  CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+  if [ "$CURRENT_BRANCH" = "HEAD" ]; then
+    warn "Detached HEAD (not on a branch) — can't determine what to pull. Skipping pull; run 'git checkout <branch>' first if you want this script to update it."
+  elif ! git fetch origin; then
+    die "git fetch origin failed — check network access / remote config, or pass --no-pull to skip."
+  elif ! git rev-parse --verify -q "origin/${CURRENT_BRANCH}" >/dev/null; then
+    warn "No origin/${CURRENT_BRANCH} on the remote — this branch was never pushed, or was deleted upstream. Skipping pull."
+  else
+    log "Pulling latest changes"
 
-[ -f docker-compose.prod.yml ] && [ -f .env.prod.example ] || die "docker-compose.prod.yml / .env.prod.example not found in $(pwd) — wrong repo or branch?"
+    DIRTY=false
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+      DIRTY=true
+    fi
+
+    STASHED=false
+    if [ "$DIRTY" = true ]; then
+      warn "Local uncommitted changes detected in this checkout:"
+      git status --porcelain
+      echo "  (this is often just docker-compose.prod.yml, if a previous run enabled GPU passthrough here)"
+      PULL_CHOICE=$(ask "Stash local changes and pull, skip the pull and keep local changes, or abort?" "stash")
+      case "$PULL_CHOICE" in
+        stash)
+          git stash push -u -m "deploy-onprem-existing-repo.sh autostash before pull"
+          STASHED=true
+          ;;
+        skip|skip-pull|no)
+          log "Skipping pull — keeping local changes and current commit as-is"
+          ;;
+        *)
+          die "Aborted. Resolve or commit local changes yourself, then re-run."
+          ;;
+      esac
+    fi
+
+    if [ "$DIRTY" = false ] || [ "$STASHED" = true ]; then
+      if ! git pull --ff-only origin "$CURRENT_BRANCH"; then
+        if [ "$STASHED" = true ]; then
+          git stash pop || warn "git stash pop failed — your pre-pull changes are still in 'git stash list', recover them manually."
+        fi
+        die "git pull --ff-only failed (local branch has diverged from origin/${CURRENT_BRANCH}?). Resolve manually (git status / git log), then re-run."
+      fi
+      log "Now at $(git rev-parse --short HEAD) on ${CURRENT_BRANCH}"
+      if [ "$STASHED" = true ]; then
+        if git stash pop; then
+          log "Re-applied your pre-pull local changes on top of the new commits"
+        else
+          warn "git stash pop hit a conflict — your pre-pull changes are still in 'git stash list'. Resolve manually (e.g. re-run the GPU step below by hand if docker-compose.prod.yml reverted to commented-out)."
+        fi
+      fi
+    fi
+  fi
+fi
 
 # ---------------------------------------------------------------------------
-# 3. Interactive .env.prod setup
+# 4. Interactive .env.prod setup
 # ---------------------------------------------------------------------------
 log "Configuring .env.prod"
 
@@ -205,9 +255,9 @@ if [ "$KEEP_EXISTING" != "yes" ]; then
   fi
 
   log ".env.prod written"
-  if git check-ignore .env.prod >/dev/null 2>&1; then
+  if [ -d .git ] && git check-ignore .env.prod >/dev/null 2>&1; then
     echo "  OK: .env.prod is gitignored"
-  else
+  elif [ -d .git ]; then
     warn ".env.prod is NOT gitignored — check .gitignore before ever running git add!"
   fi
 else
@@ -222,7 +272,7 @@ PORTAL_UI_PORT=$(grep '^PORTAL_UI_PORT=' .env.prod | head -1 | cut -d= -f2-)
 PORTAL_UI_PORT="${PORTAL_UI_PORT:-18080}"
 
 # ---------------------------------------------------------------------------
-# 4. GPU detection
+# 5. GPU detection
 # ---------------------------------------------------------------------------
 log "Checking for GPU"
 
@@ -259,7 +309,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Build images
+# 6. Build images
 # ---------------------------------------------------------------------------
 if [ "$SKIP_BUILD" = false ]; then
   log "Building images (this can take a while the first time)"
@@ -269,13 +319,13 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Start the stack
+# 7. Start the stack
 # ---------------------------------------------------------------------------
 log "Starting the stack"
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 
 # ---------------------------------------------------------------------------
-# 7. Wait for health
+# 8. Wait for health
 # ---------------------------------------------------------------------------
 log "Waiting for all services to become healthy (timeout: 10 minutes — the first-boot Ollama model pull is the slowest part)"
 
@@ -310,7 +360,7 @@ fi
 docker compose -f docker-compose.prod.yml --env-file .env.prod ps
 
 # ---------------------------------------------------------------------------
-# 8. Verification
+# 9. Verification
 # ---------------------------------------------------------------------------
 log "Running verification checks"
 
@@ -351,7 +401,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 9. Summary
+# 10. Summary
 # ---------------------------------------------------------------------------
 log "Deployment complete"
 
