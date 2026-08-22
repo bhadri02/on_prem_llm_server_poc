@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A proof-of-concept for an **on-prem enterprise LLM platform**: a chain of small FastAPI microservices that a chat request flows through in strict order, each layer enriching a shared JSON envelope (the **IMF — Internal Message Format**), plus a React admin/portal UI, a local Ollama inference backend, and Helm charts for eventual Kubernetes deployment.
+A proof-of-concept for an **on-prem enterprise LLM platform**: a chain of small FastAPI microservices that a chat request flows through in strict order, each layer enriching a shared JSON envelope (the **IMF — Internal Message Format**), plus a React admin/portal UI and a local Ollama inference backend, deployed via Docker Compose.
 
 Everything under `.kiro/` (specs, steering docs) has been deleted from the working tree in the current branch — do not assume those design docs still apply; treat the code itself as the source of truth.
 
@@ -153,22 +153,17 @@ pytest admin_portal/tests
 
 # Agent Framework has its own pytest.ini + tests dir, run from its own directory
 cd services/agent-framework && pytest
-
-# Helm chart tests (values/manifest rendering, not application logic)
-cd llm-platform && pytest tests/helm -c pytest.ini
 ```
 
 `asyncio_mode = auto` is set everywhere pytest-asyncio is used — no need for `@pytest.mark.asyncio` decorators. Tests commonly use `respx` to mock outbound `httpx` calls to downstream services rather than spinning up real dependencies, `fakeredis[aioredis]` for the cache service, and `hypothesis` for property-based tests (see `tests/property/`, `services/agent-framework/tests/test_property_*.py`). **`respx` must be `>=0.22.0`** — `0.21.x` silently fails to match any request at all under the `httpx>=0.28` pinned in this repo (every mocked call falls through as unmocked); if respx-based tests mysteriously all fail, check `pip show respx` before assuming a code regression.
 
 `admin_portal` tests that hit its DB-backed routers (`admin_portal/tests/test_users_and_keys_api.py`) override the `get_db` FastAPI dependency with a temp-file SQLite session per test — they never touch the real Postgres `DATABASE_URL`.
 
-## Kubernetes / Helm deployment (stale, not currently deployable)
+## Kubernetes / Helm deployment (removed)
 
-`llm-platform/` is the umbrella Helm chart (10 sub-charts under `llm-platform/charts/`, one per service, mirroring the local topology plus `observability` for the kube-prometheus-stack). **These charts are stale relative to the current application code** — they predate the RBAC/Postgres/policy-matrix/governance work documented elsewhere in this file — e.g. `router`'s chart has `env: {}` (none of its now-required settings like `MODEL_MATRIX_PATH`, `ADMIN_PORTAL_INTERNAL_KEY`, `POLICY_MATRIX_PATH` are wired), `admin-portal`'s chart has no `DATABASE_URL`/`ADMIN_PORTAL_INTERNAL_KEY` at all, there is no Postgres dependency anywhere in the chart tree (only `cache`'s bundled Redis), and there is no `portal_ui` chart despite it having a working `Dockerfile` — the `admin-portal` chart's Ingress claims `llm-portal.local` for itself (the raw API, no UI). Deploying this today would crash-loop most pods on missing config.
+There used to be an `llm-platform/` Helm chart tree here (10 sub-charts, one per service) plus automation scripts (`scripts/deploy.sh`, `scripts/build-and-push-all.ps1`, `scripts/test-connectivity.py`, `scripts/run-demos.ps1`) for deploying it. Both the charts and those scripts have been **removed** — the charts were stale relative to the current application code (predated the RBAC/Postgres/policy-matrix/governance work documented elsewhere in this file; e.g. `router`'s chart never got the now-required `MODEL_MATRIX_PATH`/`ADMIN_PORTAL_INTERNAL_KEY`/`POLICY_MATRIX_PATH` env vars, `admin-portal`'s chart had no Postgres wiring at all, there was no `portal_ui` chart despite it having a working `Dockerfile`) and had no working deploy target. `git log` has the full pre-removal state if a Kubernetes path is ever revisited — it would need to be rebuilt against the current app, not resurrected as-is.
 
-The scripts that used to automate this path (`scripts/deploy.sh`, `scripts/build-and-push-all.ps1`, `scripts/test-connectivity.py`, `scripts/run-demos.ps1`) have been **removed** — they had no working target to deploy to. If this path is ever revived, the charts need to be brought back in sync with the current app first; `git log` has the removed scripts' history if that work happens.
-
-**`docs/DEPLOYMENT.md`** (automated by `scripts/deploy-onprem.sh`) documents a Docker Compose path (`docker-compose.prod.yml`) instead, built and verified against the current code — use that for a real on-prem deployment. See `scripts/README.md` for what every current script in that directory does.
+**`docs/DEPLOYMENT.md`** (automated by `scripts/deploy-onprem.sh`) documents the real, current path: Docker Compose (`docker-compose.prod.yml`), built and verified against the current code. See `scripts/README.md` for what every current script in that directory does.
 
 ## Conventions to preserve when editing a service
 

@@ -1,6 +1,0 @@
-apiVersion: v2
-name: api-gateway
-description: "Layer 1 — API Gateway for the Enterprise On-Prem LLM Platform (POC)"
-type: application
-version: 0.1.0
-appVersion: "0.1.0"

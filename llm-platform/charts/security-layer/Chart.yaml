@@ -1,6 +1,0 @@
-apiVersion: v2
-name: security-layer
-description: "Security & Governance layer — injection detection, API key auth, content safety"
-type: application
-version: 0.1.0
-appVersion: "0.1.0"

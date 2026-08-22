@@ -4,15 +4,12 @@ Scripts for deploying the on-prem LLM platform via **Docker Compose** (the
 current, working deployment path — see `docs/DEPLOYMENT.md`) and for
 running/testing it locally on Windows during development.
 
-The platform previously had a Kubernetes/Helm deployment path (`deploy.sh`,
-`build-and-push-all.ps1`, `test-connectivity.py`, `run-demos.ps1`) — those
-scripts and this README's old Kubernetes-specific content have been removed.
-Per `CLAUDE.md`: the Helm charts under `llm-platform/` are stale relative to
-the current application code and would crash-loop most pods if deployed
-as-is (missing required env vars, no Postgres dependency in the chart tree,
-no `portal_ui` chart at all). If that path is ever revived, it needs the
-charts brought back in sync first — see `CLAUDE.md`'s "Kubernetes / Helm
-deployment" section for the specifics.
+The platform previously had a Kubernetes/Helm deployment path (`llm-platform/`
+chart tree, plus `deploy.sh`, `build-and-push-all.ps1`, `test-connectivity.py`,
+`run-demos.ps1`) — both the charts and those scripts have been removed, since
+the charts were stale relative to the current application code and had no
+working deploy target. See `CLAUDE.md`'s "Kubernetes / Helm deployment"
+section for what that path used to be, if it's ever revisited.
 
 ---
 
