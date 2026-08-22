@@ -7,34 +7,14 @@ values), injection-flagged count, PII detection count, token totals, and
 per-model usage counts.
 """
 
-from contextlib import asynccontextmanager
-
 import httpx
 import pytest
 
-from audit_store.database import get_connection, init_schema
-from audit_store.main import create_app
-
-AUDIT_API_KEY = "test-key"
+from tests.audit_store_test_utils import AUDIT_API_KEY, make_audit_store_app
 
 
 def _make_app():
-    @asynccontextmanager
-    async def _noop_lifespan(application):
-        yield
-
-    application = create_app()
-    application.router.lifespan_context = _noop_lifespan
-
-    conn = get_connection(":memory:")
-    init_schema(conn)
-
-    class _TestSettings:
-        audit_api_key: str = AUDIT_API_KEY
-        db_path: str = ":memory:"
-
-    application.state.conn = conn
-    application.state.settings = _TestSettings()
+    application, _engine = make_audit_store_app()
     return application
 
 

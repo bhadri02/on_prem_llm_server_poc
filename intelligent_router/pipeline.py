@@ -19,9 +19,11 @@ All exceptions from downstream calls are handled; the outer try/except catches a
 unhandled and returns 500 internal_error.
 """
 
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import AsyncIterator
 
 from fastapi import BackgroundTasks
 
@@ -30,7 +32,7 @@ from intelligent_router.audit_client import post_audit_event
 from intelligent_router.cache_client import cache_lookup, cache_write
 from intelligent_router.fallback_manager import FallbackState, create_fallback_state
 from intelligent_router.health_checker import check_model_health
-from intelligent_router.inference_client import InferenceError, call_inference
+from intelligent_router.inference_client import InferenceError, call_inference, call_inference_stream
 from intelligent_router.logging_config import get_logger
 from intelligent_router.model_selector import (
     InvalidPinnedModelError,
@@ -38,6 +40,7 @@ from intelligent_router.model_selector import (
     select_model,
 )
 from intelligent_router.policy import check_task_permission
+from intelligent_router.services.model_registry_resolver import get_model_matrix
 from intelligent_router.services.policy_resolver import get_policy_matrix
 from intelligent_router.task_classifier import classify_task
 
@@ -68,6 +71,10 @@ class PipelineResult:
 def _ms(t0: float) -> int:
     """Return wall-clock milliseconds elapsed since *t0* (monotonic), as int."""
     return int((time.monotonic() - t0) * 1000)
+
+
+def _ndjson(obj: dict) -> bytes:
+    return (json.dumps(obj) + "\n").encode()
 
 
 def _record_governance_metrics(response: dict, model: str, task_type: str, source: str) -> None:
@@ -254,12 +261,19 @@ async def run_routing_pipeline(
         routing_mode = (imf.get("routing") or {}).get("routing_mode") or "auto"
         pinned_model = (imf.get("request") or {}).get("model")
 
+        # TTL-cached live fetch from model_registry, merged over the static
+        # YAML seed (falls back to the YAML-only matrix on any failure) —
+        # this is what makes a newly-registered "active" model routable (by
+        # pin or entitlement) without a model_matrix.yaml edit + restart.
+        # See services/model_registry_resolver.py.
+        model_matrix = await get_model_matrix(state)
+
         try:
             selected_model, effective_mode = select_model(
                 task_type,
                 routing_mode,
                 pinned_model,
-                state.model_matrix,
+                model_matrix,
             )
         except InvalidPinnedModelError:
             return PipelineResult(
@@ -338,7 +352,7 @@ async def run_routing_pipeline(
             )
 
         # Build the fallback state from the primary selected model
-        fallback = create_fallback_state(selected_model, state.model_matrix)
+        fallback = create_fallback_state(selected_model, model_matrix)
 
         # -----------------------------------------------------------------------
         # Stages 3–6: Fallback loop
@@ -364,7 +378,7 @@ async def run_routing_pipeline(
             # per-request lookup against the Model Registry for the common
             # (Ollama) case. Never carries a secret — just the backend name.
             # -------------------------------------------------------------------
-            model_entry = state.model_matrix.models.get(current_model)
+            model_entry = model_matrix.models.get(current_model)
             backend = (model_entry.backend if model_entry else "ollama") or "ollama"
             imf["routing"]["backend"] = backend
 
@@ -586,3 +600,272 @@ async def run_routing_pipeline(
             error_code="internal_error",
             latency_ms=_ms(t0),
         )
+
+
+# ---------------------------------------------------------------------------
+# Streaming pipeline
+# ---------------------------------------------------------------------------
+
+
+async def run_streaming_routing_pipeline(
+    imf: dict,
+    state,
+    background_tasks: BackgroundTasks,
+) -> AsyncIterator[bytes]:
+    """Streaming counterpart to run_routing_pipeline.
+
+    Duplicates Stages 1-4 (governance gate through cache lookup, including
+    the health-check fallback loop) rather than sharing code with
+    run_routing_pipeline — the two have fundamentally different control
+    flow (return one PipelineResult vs. yield a stream of chunks), and this
+    is core routing logic that changes rarely; keep both in sync if you
+    change task classification, model selection, policy/entitlement
+    checks, health-check fallback, or cache-lookup behavior.
+
+    Wire protocol: newline-delimited JSON, same shape as inference_adapter's
+    /infer/stream (see that module's docstring) —
+        {"type": "delta", "content": "<text>"}
+        {"type": "done", "imf": {...}}
+        {"type": "error", "event": "<code>", "status_code": <int>, ...}
+    HTTP status for POST /route/stream itself is always 200; failures are
+    signaled in-band. A cache HIT is represented as a single "delta"
+    carrying the whole cached response followed immediately by "done" —
+    there's no real streaming benefit to faking a token-by-token replay of
+    an already-instant cache hit.
+
+    Fallback limitation: once any "delta" has been relayed to the client
+    for a given model attempt, a later failure from that same attempt
+    cannot cleanly fall back to the next model (the client has already
+    seen partial, unretractable output) — it's surfaced as an in-band
+    error and the stream ends. Fallback still works normally for failures
+    that occur before any content has been sent (health-check failures,
+    and inference failures that occur before the first delta).
+    """
+    t0 = time.monotonic()
+    request_id = imf.get("request_id", "unknown")
+
+    def _err(event: str, status_code: int, **extra) -> bytes:
+        return _ndjson({"type": "error", "event": event, "status_code": status_code,
+                         "request_id": request_id, **extra})
+
+    try:
+        # -----------------------------------------------------------------------
+        # Governance gate
+        # -----------------------------------------------------------------------
+        if not imf.get("governance", {}).get("content_safety_passed"):
+            yield _err("governance_check_failed", 400)
+            return
+
+        # -----------------------------------------------------------------------
+        # Stage 1: Task Classification
+        # -----------------------------------------------------------------------
+        task_type = classify_task(imf["request"]["messages"], state.classifier_rules)
+        imf["request"]["task_type"] = task_type
+
+        # -----------------------------------------------------------------------
+        # Stage 2: Model Selection
+        # -----------------------------------------------------------------------
+        routing_mode = (imf.get("routing") or {}).get("routing_mode") or "auto"
+        pinned_model = (imf.get("request") or {}).get("model")
+        model_matrix = await get_model_matrix(state)
+
+        try:
+            selected_model, effective_mode = select_model(task_type, routing_mode, pinned_model, model_matrix)
+        except InvalidPinnedModelError:
+            yield _err("invalid_pinned_model", 422)
+            return
+        except NoModelForTaskError:
+            yield _err("no_model_for_task", 503)
+            return
+
+        if "routing" not in imf or imf["routing"] is None:
+            imf["routing"] = {}
+        imf["routing"]["routing_mode"] = effective_mode
+        imf["routing"]["fallback_level"] = 0
+
+        if "cache" not in imf or imf["cache"] is None:
+            imf["cache"] = {}
+
+        # -----------------------------------------------------------------------
+        # Stage 2b: Policy & Entitlement Check
+        # -----------------------------------------------------------------------
+        user_block = imf.get("user") or {}
+        roles = user_block.get("roles") if isinstance(user_block, dict) else None
+        policy_matrix = await get_policy_matrix(state)
+
+        if not check_task_permission(roles, task_type, policy_matrix):
+            background_tasks.add_task(
+                post_audit_event, _build_policy_denied_audit(imf, _ms(t0)),
+                state.settings.audit_store_url, state.http_client, state.settings.audit_api_key,
+            )
+            yield _err("policy_denied", 403)
+            return
+
+        model_entitlements = user_block.get("model_entitlements") if isinstance(user_block, dict) else None
+        if model_entitlements and selected_model not in model_entitlements:
+            background_tasks.add_task(
+                post_audit_event, _build_entitlement_denied_audit(imf, _ms(t0)),
+                state.settings.audit_store_url, state.http_client, state.settings.audit_api_key,
+            )
+            yield _err("model_not_entitled", 403)
+            return
+
+        fallback = create_fallback_state(selected_model, model_matrix)
+
+        # -----------------------------------------------------------------------
+        # Stages 3-6: Fallback loop
+        # -----------------------------------------------------------------------
+        while True:
+            current_model = fallback.selected_model
+            imf["routing"]["selected_model"] = current_model
+
+            # -------------------------------------------------------------------
+            # Stage 3: Health Check
+            # -------------------------------------------------------------------
+            model_entry = model_matrix.models.get(current_model)
+            backend = (model_entry.backend if model_entry else "ollama") or "ollama"
+            imf["routing"]["backend"] = backend
+
+            if backend == "ollama":
+                health_url = model_entry.health_url if model_entry else ""
+                healthy = await check_model_health(
+                    health_url, state.http_client, state.settings.health_check_timeout_seconds
+                )
+            else:
+                healthy = True
+
+            if not healthy:
+                metrics.fallbacks_total.labels(task_type=task_type, reason="health_check_failed").inc()
+                next_model = fallback.advance()
+                imf["routing"]["fallback_level"] = fallback.fallback_level
+
+                if next_model is not None:
+                    logger.info(
+                        "routing_fallback",
+                        extra={"extra_fields": {"request_id": request_id, "failed_model": current_model,
+                                                 "fallback_level": fallback.fallback_level,
+                                                 "reason": "health_check_failed"}},
+                    )
+                    background_tasks.add_task(
+                        post_audit_event, _build_fallback_audit(imf, fallback, "fallback", _ms(t0)),
+                        state.settings.audit_store_url, state.http_client, state.settings.audit_api_key,
+                    )
+                    continue
+                else:
+                    background_tasks.add_task(
+                        post_audit_event, _build_routing_audit(imf, "error", _ms(t0)),
+                        state.settings.audit_store_url, state.http_client, state.settings.audit_api_key,
+                    )
+                    yield _err("all_backends_exhausted", 503, fallback_level=fallback.fallback_level)
+                    return
+
+            # -------------------------------------------------------------------
+            # Stage 4: Cache Lookup
+            # -------------------------------------------------------------------
+            cache_response = await cache_lookup(
+                imf["request"]["messages"], current_model, task_type, request_id,
+                state.settings.cache_url, state.http_client, full_imf=imf,
+            )
+            lookup_hit = bool(cache_response.get("hit"))
+            imf["cache"]["lookup_hit"] = lookup_hit
+            imf["cache"]["cache_key"] = cache_response.get("cache_key")
+
+            if lookup_hit:
+                resp_block = cache_response.get("response") or {}
+                if resp_block.get("content"):
+                    content = resp_block.get("content")
+                    imf["response"] = {
+                        "content": content,
+                        "finish_reason": resp_block.get("finish_reason"),
+                        "usage": resp_block.get("usage") or {
+                            "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+                        },
+                    }
+                    metrics.cache_hits_total.labels(task_type=task_type, model=current_model).inc()
+                    _record_governance_metrics(imf["response"], current_model, task_type, source="cache")
+                    background_tasks.add_task(
+                        post_audit_event, _build_cache_hit_audit(imf, _ms(t0)),
+                        state.settings.audit_store_url, state.http_client, state.settings.audit_api_key,
+                    )
+                    yield _ndjson({"type": "delta", "content": content})
+                    yield _ndjson({"type": "done", "imf": imf})
+                    return
+                else:
+                    imf["cache"]["lookup_hit"] = False
+
+            # -------------------------------------------------------------------
+            # Stage 5: Streaming Inference Dispatch
+            # -------------------------------------------------------------------
+            sent_any_delta = False
+            try:
+                async for chunk in call_inference_stream(
+                    imf, state.settings.inference_adapter_url, request_id,
+                    state.settings.inference_timeout_seconds, state.http_client,
+                ):
+                    chunk_type = chunk.get("type")
+
+                    if chunk_type == "delta":
+                        sent_any_delta = True
+                        yield _ndjson({"type": "delta", "content": chunk.get("content", "")})
+
+                    elif chunk_type == "error":
+                        if sent_any_delta:
+                            # Partial content already reached the client — can't
+                            # retract it, so surface the error in place rather
+                            # than silently falling back (which would look like
+                            # a second, unrelated answer starting mid-stream).
+                            yield _ndjson({
+                                "type": "error",
+                                "event": chunk.get("event", "internal_error"),
+                                "status_code": chunk.get("status_code", 502),
+                                "request_id": request_id,
+                            })
+                            return
+                        raise InferenceError(chunk.get("event", "inference_failed"), reason="stream_error")
+
+                    elif chunk_type == "done":
+                        result_imf = chunk.get("imf") or {}
+                        if "response" in result_imf:
+                            imf["response"] = result_imf["response"]
+                        _record_governance_metrics(imf.get("response") or {}, current_model, task_type, source="inference")
+
+                        if not imf["cache"].get("lookup_hit"):
+                            background_tasks.add_task(
+                                cache_write, imf["request"]["messages"], current_model, task_type,
+                                result_imf, state.settings.cache_url, state.http_client,
+                            )
+
+                        background_tasks.add_task(
+                            post_audit_event, _build_routing_audit(imf, "pass", _ms(t0)),
+                            state.settings.audit_store_url, state.http_client, state.settings.audit_api_key,
+                        )
+                        yield _ndjson({"type": "done", "imf": imf})
+                        return
+
+            except InferenceError as exc:
+                metrics.fallbacks_total.labels(task_type=task_type, reason="inference_error").inc()
+                next_model = fallback.advance()
+                imf["routing"]["fallback_level"] = fallback.fallback_level
+
+                logger.warning(
+                    "inference_error_fallback",
+                    extra={"extra_fields": {"request_id": request_id, "failed_model": current_model,
+                                             "reason": exc.reason, "fallback_level": fallback.fallback_level}},
+                )
+                background_tasks.add_task(
+                    post_audit_event, _build_fallback_audit(imf, fallback, "fallback", _ms(t0)),
+                    state.settings.audit_store_url, state.http_client, state.settings.audit_api_key,
+                )
+
+                if next_model is not None:
+                    continue
+                else:
+                    yield _err("all_backends_exhausted", 503, fallback_level=fallback.fallback_level)
+                    return
+
+    except Exception as exc:
+        logger.error(
+            "streaming_pipeline_internal_error",
+            extra={"extra_fields": {"request_id": request_id, "error": str(exc), "timestamp_utc": _utc_now()}},
+        )
+        yield _err("internal_error", 500)

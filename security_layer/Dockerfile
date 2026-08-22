@@ -40,6 +40,11 @@ COPY shared/             ./shared/
 # injection_patterns.yaml lives at repo root
 COPY injection_patterns.yaml ./injection_patterns.yaml
 
+# Non-root user
+RUN adduser --uid 1000 --disabled-password --gecos "" appuser \
+ && chown -R appuser:appuser /app
+USER appuser
+
 EXPOSE 8081 9090
 
 CMD ["sh", "-c", \

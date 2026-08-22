@@ -86,6 +86,19 @@ ask_secret_or_generate() {
   echo "$reply"
 }
 
+ask_secret_or_generate_fernet() {
+  # Same as ask_secret_or_generate, but auto-generates a valid Fernet key
+  # (32 random bytes, url-safe base64) instead of hex — required by
+  # model_registry's REGISTRY_ENCRYPTION_KEY (cryptography.fernet.Fernet).
+  local name="$1" reply
+  read -rp "Enter value for $name (press Enter to auto-generate a random one): " reply
+  if [ -z "$reply" ]; then
+    reply="$(openssl rand -base64 32 | tr '+/' '-_')"
+    echo "  -> generated a random value for $name" >&2
+  fi
+  echo "$reply"
+}
+
 set_env_var() {
   # set_env_var "KEY" "value" "file" -> writes/overwrites KEY=value in file.
   #
@@ -163,6 +176,7 @@ if [ "$KEEP_EXISTING" != "yes" ]; then
   ADMIN_PORTAL_INTERNAL_KEY=$(ask_secret_or_generate "ADMIN_PORTAL_INTERNAL_KEY")
   AUDIT_API_KEY=$(ask_secret_or_generate "AUDIT_API_KEY")
   REGISTRY_API_KEY=$(ask_secret_or_generate "REGISTRY_API_KEY")
+  REGISTRY_ENCRYPTION_KEY=$(ask_secret_or_generate_fernet "REGISTRY_ENCRYPTION_KEY")
 
   echo
   echo "The admin password is what you'll type into the browser login screen — pick something real."
@@ -196,6 +210,7 @@ if [ "$KEEP_EXISTING" != "yes" ]; then
   set_env_var "ADMIN_PORTAL_INTERNAL_KEY" "$ADMIN_PORTAL_INTERNAL_KEY" .env.prod
   set_env_var "AUDIT_API_KEY" "$AUDIT_API_KEY" .env.prod
   set_env_var "REGISTRY_API_KEY" "$REGISTRY_API_KEY" .env.prod
+  set_env_var "REGISTRY_ENCRYPTION_KEY" "$REGISTRY_ENCRYPTION_KEY" .env.prod
   set_env_var "SEED_ADMIN_PASSWORD" "$SEED_ADMIN_PASSWORD" .env.prod
   set_env_var "OLLAMA_DEFAULT_MODEL" "$OLLAMA_DEFAULT_MODEL" .env.prod
   set_env_var "OLLAMA_EXTRA_MODELS" "$OLLAMA_EXTRA_MODELS" .env.prod

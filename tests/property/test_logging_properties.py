@@ -19,7 +19,6 @@ import json
 import logging
 import os
 import re
-from contextlib import asynccontextmanager
 from uuid import uuid4
 
 # ---------------------------------------------------------------------------
@@ -31,16 +30,18 @@ from hypothesis import given, settings, strategies as st
 # ---------------------------------------------------------------------------
 # Register the 'ci' Hypothesis settings profile.
 # Must be done before any @given-decorated functions are defined.
+# deadline=None: see test_write_properties.py's identical note (real DB
+# round trips per example are I/O-bound and can occasionally exceed the
+# default 200ms wall-clock deadline under load).
 # ---------------------------------------------------------------------------
-settings.register_profile("ci", max_examples=100)
+settings.register_profile("ci", max_examples=100, deadline=None)
 settings.load_profile("ci")
 
 # ---------------------------------------------------------------------------
 # Application imports
 # ---------------------------------------------------------------------------
-from audit_store.database import get_connection, init_schema
-from audit_store.main import create_app
 from audit_store.models import LayerEnum, EventTypeEnum, OutcomeEnum, UUID4_RE
+from tests.audit_store_test_utils import make_audit_store_app
 
 # ---------------------------------------------------------------------------
 # Test constants
@@ -61,25 +62,11 @@ _VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 # ---------------------------------------------------------------------------
 
 def _make_app():
-    """Build a fresh in-memory FastAPI app for one Hypothesis example."""
+    """Build a fresh in-memory FastAPI app for one Hypothesis example.
 
-    @asynccontextmanager
-    async def _noop_lifespan(application):
-        yield
-
-    application = create_app()
-    application.router.lifespan_context = _noop_lifespan
-
-    conn = get_connection(":memory:")
-    init_schema(conn)
-
-    class _TestSettings:
-        audit_api_key: str = AUDIT_API_KEY
-        db_path: str = ":memory:"
-
-    application.state.conn = conn
-    application.state.settings = _TestSettings()
-    return application, conn
+    Returns (application, engine) — see tests/audit_store_test_utils.py.
+    """
+    return make_audit_store_app()
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +175,7 @@ def test_every_log_entry_is_single_line_json(operation):
                     )
         finally:
             _restore_audit_loggers(saved)
-            conn.close()
+            conn.dispose()
 
         return buf.getvalue()
 

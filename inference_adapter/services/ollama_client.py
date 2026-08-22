@@ -11,7 +11,10 @@ Validates: Requirements 13.5, 13.6, 9.1, 9.2, 9.3, 9.4
 
 from __future__ import annotations
 
+from typing import AsyncIterator
+
 import httpx
+import json
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +151,64 @@ class OllamaClient:
         except Exception as exc:
             raise OllamaInvalidResponseError(
                 "Failed to parse Ollama response as JSON"
+            ) from exc
+
+    # ------------------------------------------------------------------
+    # Streaming chat completion
+    # ------------------------------------------------------------------
+
+    async def chat_stream(self, payload: dict) -> AsyncIterator[dict]:
+        """Stream a chat completion from Ollama's ``/api/chat`` endpoint.
+
+        ``stream`` is always forced to ``True`` before the request is sent.
+        Ollama's streaming response is newline-delimited JSON: each line is
+        a partial ``{"message": {"content": "<delta>"}, "done": false}``
+        object, with the final line carrying ``"done": true`` plus the same
+        stats fields (``prompt_eval_count``, ``eval_count``,
+        ``total_duration``, ``done_reason``) that ``chat()``'s single
+        response carries.
+
+        Yields:
+            Each parsed JSON line as a dict, in arrival order.
+
+        Raises:
+            OllamaTimeoutError, OllamaConnectionError, OllamaBackendError,
+            OllamaRequestError, OllamaInvalidResponseError — same meaning
+            as chat(); raised mid-generator, so callers consuming this via
+            ``async for`` see the exception at whichever iteration it
+            occurs on (immediately, if the failure is in the initial
+            connect/status-check before any line is read).
+        """
+        payload = {**payload, "stream": True}
+        url = f"{self._base_url}/api/chat"
+        try:
+            async with self._client.stream("POST", url, json=payload) as response:
+                status = response.status_code
+                if 500 <= status <= 599:
+                    raise OllamaBackendError(status)
+                if 400 <= status <= 499:
+                    raise OllamaRequestError(status)
+
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        yield json.loads(line)
+                    except Exception as exc:
+                        raise OllamaInvalidResponseError(
+                            "Failed to parse Ollama stream line"
+                        ) from exc
+        except httpx.TimeoutException as exc:
+            raise OllamaTimeoutError(
+                f"Request to Ollama timed out after {self._timeout}s"
+            ) from exc
+        except httpx.ConnectError as exc:
+            raise OllamaConnectionError(
+                f"Could not connect to Ollama at {self._base_url}: {exc}"
+            ) from exc
+        except httpx.TransportError as exc:
+            raise OllamaConnectionError(
+                f"Transport error communicating with Ollama: {exc}"
             ) from exc
 
     # ------------------------------------------------------------------

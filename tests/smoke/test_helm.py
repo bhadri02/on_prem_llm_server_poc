@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
+from sqlalchemy import inspect
 
 from audit_store.config import Settings
 from audit_store.main import lifespan
@@ -88,44 +89,33 @@ def test_helm_template_renders_expected_resources():
 
 @pytest.mark.asyncio
 async def test_startup_smoke_valid_config():
-    """With AUDIT_API_KEY='test-key' and DB_PATH=':memory:', the lifespan must:
-    - store a non-None connection on app.state.conn
-    - have created the audit_events table
-    - have WAL mode set (or 'memory' for in-memory DBs)
+    """With AUDIT_API_KEY='test-key' and DATABASE_URL pointed at an in-memory
+    SQLite DB, the lifespan must:
+    - store a non-None engine on app.state.engine
+    - have created the audit_events table (with its indexes)
 
     Subtask 19.3.
     """
     mock_settings = MagicMock(spec=Settings)
     mock_settings.audit_api_key = "test-key"
-    mock_settings.db_path = ":memory:"
+    mock_settings.database_url = "sqlite:///:memory:"
+    mock_settings.retention_days = 0
 
     test_app = FastAPI(lifespan=lifespan)
 
     with patch("audit_store.main.settings", mock_settings):
         async with lifespan(test_app):
-            conn = test_app.state.conn
+            engine = test_app.state.engine
 
-            # 1. app.state.conn is not None
-            assert conn is not None, "app.state.conn should be set after lifespan startup"
+            # 1. app.state.engine is not None
+            assert engine is not None, "app.state.engine should be set after lifespan startup"
 
-            # 2. audit_events table exists
-            row = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='audit_events'"
-            ).fetchone()
-            assert row is not None, (
+            # 2. audit_events table (and its indexes) exist
+            assert "audit_events" in inspect(engine).get_table_names(), (
                 "audit_events table was not created during lifespan startup"
             )
-
-            # 3. PRAGMA journal_mode
-            # SQLite :memory: databases don't support WAL (disk-only feature);
-            # they return "memory".  A file-based DB would return "wal".
-            # The lifespan applies PRAGMA journal_mode=WAL via get_connection,
-            # so we accept either "wal" (file DB) or "memory" (in-memory DB).
-            mode_row = conn.execute("PRAGMA journal_mode").fetchone()
-            assert mode_row is not None, "PRAGMA journal_mode returned no rows"
-            assert mode_row[0] in ("wal", "memory"), (
-                f"Unexpected journal_mode '{mode_row[0]}'; expected 'wal' or 'memory'"
-            )
+            index_names = {idx["name"] for idx in inspect(engine).get_indexes("audit_events")}
+            assert index_names == {"idx_request_id", "idx_user_id", "idx_timestamp"}
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +127,7 @@ async def test_startup_smoke_refuses_empty_api_key():
     """With AUDIT_API_KEY='' the lifespan must raise SystemExit (subtask 19.4)."""
     mock_settings = MagicMock(spec=Settings)
     mock_settings.audit_api_key = ""
-    mock_settings.db_path = ":memory:"
+    mock_settings.database_url = "sqlite:///:memory:"
 
     test_app = FastAPI(lifespan=lifespan)
 

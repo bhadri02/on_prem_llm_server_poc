@@ -176,7 +176,8 @@ No backend support — chat history is **not persisted**. The mockup's
 `sessions` array is entirely client-state. If multi-session history is
 wanted, it needs a new backend feature (not present today); for now, treat
 Chat as a single ephemeral conversation per page load, matching the MVP's
-documented non-streaming, no-persistence scope.
+documented no-persistence scope (streaming itself is implemented — see §5.2
+item 3).
 
 ---
 
@@ -588,12 +589,18 @@ Consequences for the UI:
    call is fully stateless server-side; multi-turn context and multi-session
    history are entirely client-managed in memory. Refreshing the page loses
    everything. Not in scope for this backend pass.
-3. **No real streaming.** Both mockups' copy implies token-by-token
-   streaming ("Responses stream token-by-token..."); the actual backend is
-   request/response only. This was an explicit scope decision (documented in
-   the original MVP plan) — SSE would require touching every hop in the
-   pipeline. Either adjust the copy or budget streaming as separate future
-   work.
+3. **Real streaming — implemented.** Both mockups' copy implies token-by-token
+   streaming ("Responses stream token-by-token...") — this is no longer
+   aspirational. `POST /portal/chat/completions` with `"stream": true` relays
+   real SSE all the way through every hop (inference_adapter -> Ollama or
+   Anthropic -> intelligent_router -> security_layer, which chunk-rescans and
+   masks PII on the fly via `StreamingPiiMasker` -> api_gateway, which reframes
+   as OpenAI-compatible `chat.completion.chunk` events -> admin_portal, which
+   relays api_gateway's already-correct SSE bytes unchanged). `portal_ui`'s
+   `ChatView.tsx` consumes it via `portalClient.streamChatCompletion()`,
+   appending deltas to the in-progress assistant message as they arrive. The
+   Playground view (`admin_portal/routers/playground.py`) intentionally still
+   uses the buffered, non-streaming path — not updated in this pass.
 4. **No task-type request-volume breakdown metric.** The dashboard's "Requests
    by task type" bar chart has no backing endpoint — Prometheus metrics
    exist per-model and per-department, not per-task-type in an

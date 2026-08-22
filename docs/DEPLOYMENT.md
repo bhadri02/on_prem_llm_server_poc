@@ -450,16 +450,18 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod build
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 ```
 
-**Back up persistent data** — four things actually need backing up:
+**Back up persistent data** — three things actually need backing up (audit_store
+is Postgres-backed now, not a separate SQLite volume — its `audit_events`
+table lives in the same `llm_platform` database as users/roles/API keys, so
+one `pg_dump` covers both). Use `scripts/backup-onprem.sh` (see
+`scripts/README.md`) to automate this, including retention pruning and a
+matching `scripts/restore-onprem.sh`; the manual commands it wraps are shown
+here for reference:
 
 ```bash
-# Postgres (users/roles/API keys)
+# Postgres (users/roles/API keys, and the audit trail)
 docker compose -f docker-compose.prod.yml --env-file .env.prod exec postgres \
   pg_dump -U llm_user llm_platform > backup-$(date +%F).sql
-
-# Audit trail (SQLite file inside the audit_store_data volume)
-docker run --rm -v llm-platform-prod_audit_store_data:/data -v "$PWD":/backup \
-  alpine tar czf /backup/audit-store-$(date +%F).tar.gz -C /data .
 
 # Model registry catalog (JSON file)
 docker run --rm -v llm-platform-prod_model_registry_data:/data -v "$PWD":/backup \

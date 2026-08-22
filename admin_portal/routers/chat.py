@@ -1,17 +1,20 @@
 """
 admin_portal/routers/chat.py
 
-Chat proxy endpoints for the Portal UI's Chat view (Phase 4 — non-streaming,
-per the MVP scope decision: no end-to-end SSE streaming exists yet in the
-core pipeline, so this mirrors the existing Playground request/response
-model rather than adding a `/completions/stream` endpoint).
+Chat proxy endpoints for the Portal UI's Chat view.
 
 POST /chat/completions
-    Forwards {model, messages, temperature} to the API Gateway using the
-    portal's own resolved API key (GATEWAY_API_KEY) — structurally the same
+    Forwards {model, messages, temperature, stream} to the API Gateway
+    using the caller's own session-scoped API key — structurally the same
     proxy as routers/playground.py::playground_chat. Kept as a distinct
     endpoint from /playground/chat per the plan's intentional Chat vs
-    Playground split.
+    Playground split. When stream=true, relays the API Gateway's SSE
+    response chunk-by-chunk (see services/proxy.py's
+    sse_relay_with_inband_error, shared with routers/playground.py's own
+    streaming path) instead of buffering the whole thing — real end-to-end
+    streaming now exists in the core pipeline (api_gateway ->
+    security_layer -> intelligent_router -> inference_adapter, all the way
+    down to Ollama/Anthropic).
 
 GET /chat/models
     Returns every active model, each annotated with `entitled: bool` per
@@ -29,7 +32,7 @@ import time
 
 import httpx
 from fastapi import APIRouter, Depends
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -45,7 +48,7 @@ from admin_portal.metrics import (
 )
 from admin_portal.schemas.errors import ErrorResponse
 from admin_portal.schemas.playground import ChatRequest
-from admin_portal.services.proxy import ProxyUnavailableError, async_proxy
+from admin_portal.services.proxy import ProxyUnavailableError, async_proxy, sse_relay_with_inband_error
 from admin_portal.services.session_auth import AuthContext, get_current_session
 
 # ---------------------------------------------------------------------------
@@ -72,8 +75,10 @@ router = APIRouter(tags=["chat"])
     "/chat/completions",
     summary="Chat completion",
     description=(
-        "Forward a chat request to the API Gateway using the portal's own "
-        "API key. Returns HTTP 502 if the API Gateway is unreachable."
+        "Forward a chat request to the API Gateway using the caller's "
+        "session-scoped API key. Returns HTTP 502 if the API Gateway is "
+        "unreachable (non-streaming), or an in-band SSE error frame "
+        "(streaming — see api_gateway's own streaming error format)."
     ),
 )
 async def chat_completions(body: ChatRequest, ctx: AuthContext = Depends(get_current_session)) -> Response:
@@ -82,6 +87,14 @@ async def chat_completions(body: ChatRequest, ctx: AuthContext = Depends(get_cur
     # portal's own fixed GATEWAY_API_KEY — this is what makes per-user RBAC
     # (policy_denied / model_not_entitled) actually reflect who's asking.
     headers = {"X-API-Key": ctx.api_key_raw}
+
+    if body.stream:
+        return StreamingResponse(
+            sse_relay_with_inband_error(
+                _client, "POST", upstream_url, headers=headers, json=body.model_dump(), timeout=_PROXY_TIMEOUT
+            ),
+            media_type="text/event-stream",
+        )
 
     t_start = time.monotonic()
     try:

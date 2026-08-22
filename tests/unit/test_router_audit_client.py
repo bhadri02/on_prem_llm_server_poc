@@ -22,6 +22,13 @@ captures records that propagate to the root logger.  To work around this we
 patch the module-level logger directly with unittest.mock.patch — the same
 pattern used in tests/unit/test_cache_client.py.
 
+post_audit_event() now retries up to MAX_ATTEMPTS times with a short backoff
+before giving up (see audit_client.py's module docstring), so failure-path
+tests below register MAX_ATTEMPTS responses/exceptions (pytest_httpx
+requires one registration per actual outbound request), assert
+call_count == MAX_ATTEMPTS instead of assert_called_once(), and patch
+asyncio.sleep to keep the tests fast.
+
 Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7
 """
 
@@ -41,7 +48,24 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from intelligent_router.audit_client import post_audit_event
+import intelligent_router.audit_client as audit_client_module
+from intelligent_router.audit_client import MAX_ATTEMPTS, post_audit_event
+
+
+@pytest.fixture(autouse=True)
+def _reset_pending_queue():
+    """_pending is process-global — clear it before/after each test."""
+    audit_client_module._pending.clear()
+    yield
+    audit_client_module._pending.clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_delay(monkeypatch):
+    """Skip the real backoff sleep between retries in every test here."""
+    async def _no_sleep(*_args, **_kwargs) -> None:
+        return None
+    monkeypatch.setattr(audit_client_module.asyncio, "sleep", _no_sleep)
 
 # ---------------------------------------------------------------------------
 # Constants shared across all tests
@@ -65,17 +89,19 @@ SAMPLE_EVENT = {
 
 class TestAuditWriteHttp500:
     async def test_does_not_raise_on_500(self, httpx_mock):
-        httpx_mock.add_response(url=AUDIT_EVENTS_URL, status_code=500)
+        for _ in range(MAX_ATTEMPTS):
+            httpx_mock.add_response(url=AUDIT_EVENTS_URL, status_code=500)
 
         with patch("intelligent_router.audit_client.logger") as mock_logger:
             async with httpx.AsyncClient() as client:
                 # Must not raise
                 await post_audit_event(SAMPLE_EVENT, AUDIT_STORE_URL, client)
 
-        mock_logger.warning.assert_called_once()
+        assert mock_logger.warning.call_count == MAX_ATTEMPTS
 
     async def test_logs_warning_message_on_500(self, httpx_mock):
-        httpx_mock.add_response(url=AUDIT_EVENTS_URL, status_code=500)
+        for _ in range(MAX_ATTEMPTS):
+            httpx_mock.add_response(url=AUDIT_EVENTS_URL, status_code=500)
 
         with patch("intelligent_router.audit_client.logger") as mock_logger:
             async with httpx.AsyncClient() as client:
@@ -87,13 +113,14 @@ class TestAuditWriteHttp500:
     async def test_non_2xx_applies_to_all_3xx_and_above(self, httpx_mock):
         """Status codes 300+ (301, 404, 503) all trigger the WARNING branch."""
         for status_code in (301, 400, 404, 503):
-            httpx_mock.add_response(url=AUDIT_EVENTS_URL, status_code=status_code)
+            for _ in range(MAX_ATTEMPTS):
+                httpx_mock.add_response(url=AUDIT_EVENTS_URL, status_code=status_code)
 
             with patch("intelligent_router.audit_client.logger") as mock_logger:
                 async with httpx.AsyncClient() as client:
                     await post_audit_event(SAMPLE_EVENT, AUDIT_STORE_URL, client)
 
-            mock_logger.warning.assert_called_once()
+            assert mock_logger.warning.call_count == MAX_ATTEMPTS
 
 
 # ---------------------------------------------------------------------------
@@ -103,36 +130,39 @@ class TestAuditWriteHttp500:
 
 class TestAuditWriteTimeout:
     async def test_does_not_raise_on_connect_timeout(self, httpx_mock):
-        httpx_mock.add_exception(
-            httpx.ConnectTimeout("timed out", request=None),
-            url=AUDIT_EVENTS_URL,
-        )
+        for _ in range(MAX_ATTEMPTS):
+            httpx_mock.add_exception(
+                httpx.ConnectTimeout("timed out", request=None),
+                url=AUDIT_EVENTS_URL,
+            )
 
         with patch("intelligent_router.audit_client.logger") as mock_logger:
             async with httpx.AsyncClient() as client:
                 # Must not raise
                 await post_audit_event(SAMPLE_EVENT, AUDIT_STORE_URL, client)
 
-        mock_logger.warning.assert_called_once()
+        assert mock_logger.warning.call_count == MAX_ATTEMPTS
 
     async def test_does_not_raise_on_read_timeout(self, httpx_mock):
-        httpx_mock.add_exception(
-            httpx.ReadTimeout("read timed out", request=None),
-            url=AUDIT_EVENTS_URL,
-        )
+        for _ in range(MAX_ATTEMPTS):
+            httpx_mock.add_exception(
+                httpx.ReadTimeout("read timed out", request=None),
+                url=AUDIT_EVENTS_URL,
+            )
 
         with patch("intelligent_router.audit_client.logger") as mock_logger:
             async with httpx.AsyncClient() as client:
                 await post_audit_event(SAMPLE_EVENT, AUDIT_STORE_URL, client)
 
-        mock_logger.warning.assert_called_once()
+        assert mock_logger.warning.call_count == MAX_ATTEMPTS
 
     async def test_timeout_warning_message_contains_timeout_keyword(self, httpx_mock):
         """The WARNING log message for a timeout must contain the string 'timeout'."""
-        httpx_mock.add_exception(
-            httpx.ConnectTimeout("timed out", request=None),
-            url=AUDIT_EVENTS_URL,
-        )
+        for _ in range(MAX_ATTEMPTS):
+            httpx_mock.add_exception(
+                httpx.ConnectTimeout("timed out", request=None),
+                url=AUDIT_EVENTS_URL,
+            )
 
         with patch("intelligent_router.audit_client.logger") as mock_logger:
             async with httpx.AsyncClient() as client:
@@ -153,23 +183,25 @@ class TestAuditWriteTimeout:
 
 class TestAuditWriteConnectionRefused:
     async def test_does_not_raise_on_connect_error(self, httpx_mock):
-        httpx_mock.add_exception(
-            httpx.ConnectError("Connection refused"),
-            url=AUDIT_EVENTS_URL,
-        )
+        for _ in range(MAX_ATTEMPTS):
+            httpx_mock.add_exception(
+                httpx.ConnectError("Connection refused"),
+                url=AUDIT_EVENTS_URL,
+            )
 
         with patch("intelligent_router.audit_client.logger") as mock_logger:
             async with httpx.AsyncClient() as client:
                 # Must not raise
                 await post_audit_event(SAMPLE_EVENT, AUDIT_STORE_URL, client)
 
-        mock_logger.warning.assert_called_once()
+        assert mock_logger.warning.call_count == MAX_ATTEMPTS
 
     async def test_logs_audit_write_failed_on_connect_error(self, httpx_mock):
-        httpx_mock.add_exception(
-            httpx.ConnectError("Connection refused"),
-            url=AUDIT_EVENTS_URL,
-        )
+        for _ in range(MAX_ATTEMPTS):
+            httpx_mock.add_exception(
+                httpx.ConnectError("Connection refused"),
+                url=AUDIT_EVENTS_URL,
+            )
 
         with patch("intelligent_router.audit_client.logger") as mock_logger:
             async with httpx.AsyncClient() as client:
@@ -180,10 +212,11 @@ class TestAuditWriteConnectionRefused:
 
     async def test_never_raises_regardless_of_exception_type(self, httpx_mock):
         """post_audit_event must never propagate any exception to the caller."""
-        httpx_mock.add_exception(
-            httpx.ConnectError("unreachable"),
-            url=AUDIT_EVENTS_URL,
-        )
+        for _ in range(MAX_ATTEMPTS):
+            httpx_mock.add_exception(
+                httpx.ConnectError("unreachable"),
+                url=AUDIT_EVENTS_URL,
+            )
 
         async with httpx.AsyncClient() as client:
             # Should not raise — no assertion needed beyond reaching this line

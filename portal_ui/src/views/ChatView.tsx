@@ -1,8 +1,10 @@
 /**
  * ChatView
  *
- * Interactive Chat view (Phase 4 — non-streaming per the MVP scope
- * decision: no end-to-end SSE exists yet in the core pipeline).
+ * Interactive Chat view. Streams the assistant's reply token-by-token via
+ * portalClient.streamChatCompletion (real end-to-end SSE now exists in the
+ * core pipeline: api_gateway -> security_layer -> intelligent_router ->
+ * inference_adapter).
  *
  * - Model dropdown populated by GET /portal/chat/models (already
  *   entitlement-filtered server-side — not a reuse of ModelSelector.tsx,
@@ -10,40 +12,15 @@
  *   chat surface).
  * - In-browser-only session history (Section 3.2 — not persisted to a DB).
  * - Enter submits, Shift+Enter inserts a newline (Section 3.3).
- * - Errors (400/403/429/502) surfaced inline via ErrorBanner.
+ * - Errors (400/403/429/502, or an in-band stream error) surfaced inline via ErrorBanner.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as portalClient from "../api/portalClient";
 import { ApiError, ModelRecord } from "../types";
 import ChatMessageList, { ChatMessage } from "../components/chat/ChatMessageList";
 import ErrorBanner from "../components/ErrorBanner";
 import LoadingSpinner from "../components/LoadingSpinner";
-
-/** Narrows the unknown chat-completion response to the assistant's reply text. */
-function extractAssistantContent(raw: unknown): string {
-  if (raw !== null && typeof raw === "object") {
-    const obj = raw as Record<string, unknown>;
-
-    // IMF envelope: response.content
-    const responseEnv = obj["response"];
-    if (responseEnv !== null && typeof responseEnv === "object") {
-      const content = (responseEnv as Record<string, unknown>)["content"];
-      if (typeof content === "string") return content;
-    }
-
-    // OpenAI-compatible: choices[0].message.content
-    const choices = obj["choices"];
-    if (Array.isArray(choices) && choices.length > 0) {
-      const message = (choices[0] as Record<string, unknown>)["message"];
-      if (message !== null && typeof message === "object") {
-        const content = (message as Record<string, unknown>)["content"];
-        if (typeof content === "string") return content;
-      }
-    }
-  }
-  return JSON.stringify(raw, null, 2);
-}
 
 export default function ChatView() {
   const [models, setModels] = useState<ModelRecord[]>([]);
@@ -55,6 +32,13 @@ export default function ChatView() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<{ statusCode: number; message: string } | null>(null);
+  const abortStreamRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return () => {
+      abortStreamRef.current?.();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -82,33 +66,41 @@ export default function ChatView() {
 
   const sendDisabled = sending || modelsLoading || !selectedModel || !input.trim();
 
-  async function handleSend() {
+  function handleSend() {
     const trimmed = input.trim();
     if (!trimmed || sendDisabled) return;
 
     const nextMessages: ChatMessage[] = [...messages, { role: "user", content: trimmed }];
-    setMessages(nextMessages);
+    // Append an empty assistant placeholder that gets filled in as deltas arrive.
+    setMessages([...nextMessages, { role: "assistant", content: "" }]);
     setInput("");
     setSending(true);
     setError(null);
 
-    try {
-      const raw = await portalClient.postChatCompletion({
-        model: selectedModel,
-        messages: nextMessages,
-        temperature: 0.7,
-      });
-      const content = extractAssistantContent(raw);
-      setMessages((prev) => [...prev, { role: "assistant", content }]);
-    } catch (err) {
-      if (err instanceof ApiError) {
-        setError({ statusCode: err.status, message: err.message });
-      } else {
-        setError({ statusCode: 0, message: String(err) });
+    abortStreamRef.current = portalClient.streamChatCompletion(
+      { model: selectedModel, messages: nextMessages, temperature: 0.7 },
+      {
+        onDelta: (delta) => {
+          setMessages((prev) => {
+            const updated = [...prev];
+            const last = updated[updated.length - 1];
+            updated[updated.length - 1] = { ...last, content: last.content + delta };
+            return updated;
+          });
+        },
+        onDone: () => {
+          setSending(false);
+          abortStreamRef.current = null;
+        },
+        onError: (message) => {
+          setError({ statusCode: 0, message });
+          // Drop the (possibly partial) assistant placeholder — the error banner covers it.
+          setMessages((prev) => prev.slice(0, -1));
+          setSending(false);
+          abortStreamRef.current = null;
+        },
       }
-    } finally {
-      setSending(false);
-    }
+    );
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -170,7 +162,9 @@ export default function ChatView() {
 
       <div className="card" style={{ minHeight: 320, display: "flex", flexDirection: "column", gap: 16 }}>
         <ChatMessageList messages={messages} />
-        {sending && <LoadingSpinner label="Waiting for response…" />}
+        {sending && messages[messages.length - 1]?.content === "" && (
+          <LoadingSpinner label="Waiting for response…" />
+        )}
       </div>
 
       <div className="card" style={{ display: "flex", flexDirection: "column", gap: 8 }}>

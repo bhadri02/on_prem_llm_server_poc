@@ -2,13 +2,15 @@
  * PlaygroundView
  *
  * Composes ModelSelector, TemperatureInput, ChatWindow, LoadingSpinner, and
- * ErrorBanner into the main playground experience.
+ * ErrorBanner into the main playground experience. Streams the assistant's
+ * reply token-by-token via portalClient.streamPlaygroundChat.
  *
  * State owned here:
  *   - selectedModel  — set by ModelSelector
  *   - temperature    — set by TemperatureInput (default 0.7)
- *   - chatResponse   — last assistant reply + request_id
- *   - error          — ApiError captured during postChat
+ *   - chatResponse   — in-progress/last assistant reply + request_id, filled
+ *                      incrementally as stream deltas arrive
+ *   - error          — message from an in-band stream error or transport failure
  *   - inFlight       — true while the chat request is pending
  *   - modelLoadError — true when ModelSelector reports a fetch failure
  *
@@ -20,7 +22,7 @@
  * Requirements: 2.1, 2.2, 2.3, 2.5, 2.6, 2.7, 2.8
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ModelSelector from "../components/playground/ModelSelector";
 import TemperatureInput from "../components/playground/TemperatureInput";
@@ -28,49 +30,10 @@ import ChatWindow from "../components/playground/ChatWindow";
 import LoadingSpinner from "../components/LoadingSpinner";
 import ErrorBanner from "../components/ErrorBanner";
 import * as portalClient from "../api/portalClient";
-import { ApiError } from "../types";
 
 const DEFAULT_TEMPERATURE = 0.7;
 const TEMP_MIN = 0.0;
 const TEMP_MAX = 2.0;
-
-/** Narrows the unknown postChat response to extract content and request_id. */
-function extractChatResponse(raw: unknown): { content: string; requestId: string } {
-  if (raw === null || typeof raw !== "object") {
-    throw new Error("Unexpected response format from chat endpoint.");
-  }
-
-  const obj = raw as Record<string, unknown>;
-
-  // Extract request_id
-  const requestId =
-    typeof obj["request_id"] === "string" ? obj["request_id"] : "";
-
-  // Try the IMF envelope: response.content
-  const responseEnv = obj["response"];
-  if (responseEnv !== null && typeof responseEnv === "object") {
-    const respObj = responseEnv as Record<string, unknown>;
-    if (typeof respObj["content"] === "string") {
-      return { content: respObj["content"], requestId };
-    }
-  }
-
-  // Try OpenAI-compatible: choices[0].message.content
-  const choices = obj["choices"];
-  if (Array.isArray(choices) && choices.length > 0) {
-    const first = choices[0] as Record<string, unknown>;
-    const msgEnv = first["message"];
-    if (msgEnv !== null && typeof msgEnv === "object") {
-      const msg = msgEnv as Record<string, unknown>;
-      if (typeof msg["content"] === "string") {
-        return { content: msg["content"], requestId };
-      }
-    }
-  }
-
-  // Fallback: stringify the whole thing
-  return { content: JSON.stringify(raw, null, 2), requestId };
-}
 
 export default function PlaygroundView() {
   const navigate = useNavigate();
@@ -86,37 +49,52 @@ export default function PlaygroundView() {
   );
   const [inFlight, setInFlight] = useState(false);
   const [modelLoadError, setModelLoadError] = useState(false);
+  const abortStreamRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return () => {
+      abortStreamRef.current?.();
+    };
+  }, []);
 
   const temperatureOutOfRange = temperature < TEMP_MIN || temperature > TEMP_MAX;
   const sendDisabled = inFlight || modelLoadError || temperatureOutOfRange;
 
-  async function handleSend(message: string) {
+  function handleSend(message: string) {
     if (sendDisabled) return;
 
     setInFlight(true);
     setError(null);
-    setChatResponse(null);
+    setChatResponse({ content: "", requestId: "" });
 
-    try {
-      const raw = await portalClient.postChat({
+    abortStreamRef.current = portalClient.streamPlaygroundChat(
+      {
         model: selectedModel,
         messages: [{ role: "user", content: message }],
         temperature,
-      });
-
-      const parsed = extractChatResponse(raw);
-      setChatResponse(parsed);
-    } catch (err) {
-      if (err instanceof ApiError) {
-        setError({ statusCode: err.status, message: err.message });
-      } else if (err instanceof Error) {
-        setError({ statusCode: 0, message: err.message });
-      } else {
-        setError({ statusCode: 0, message: "An unknown error occurred." });
+      },
+      {
+        onId: (requestId) => {
+          setChatResponse((prev) => ({ content: prev?.content ?? "", requestId }));
+        },
+        onDelta: (delta) => {
+          setChatResponse((prev) => ({
+            content: (prev?.content ?? "") + delta,
+            requestId: prev?.requestId ?? "",
+          }));
+        },
+        onDone: () => {
+          setInFlight(false);
+          abortStreamRef.current = null;
+        },
+        onError: (message) => {
+          setError({ statusCode: 0, message });
+          setChatResponse(null);
+          setInFlight(false);
+          abortStreamRef.current = null;
+        },
       }
-    } finally {
-      setInFlight(false);
-    }
+    );
   }
 
   function handleViewAudit(requestId: string) {
@@ -127,7 +105,7 @@ export default function PlaygroundView() {
     <div className="playground-layout">
       <h1>Playground</h1>
 
-      {/* Error banner — displayed when postChat fails */}
+      {/* Error banner — displayed on an in-band stream error or transport failure */}
       {error && (
         <ErrorBanner
           statusCode={error.statusCode}
@@ -170,8 +148,8 @@ export default function PlaygroundView() {
         />
       </div>
 
-      {/* Loading spinner — visible while request is in-flight */}
-      {inFlight && <LoadingSpinner label="Waiting for response…" />}
+      {/* Loading spinner — visible until the first delta arrives */}
+      {inFlight && !chatResponse?.content && <LoadingSpinner label="Waiting for response…" />}
     </div>
   );
 }

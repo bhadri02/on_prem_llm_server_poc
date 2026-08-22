@@ -18,7 +18,11 @@ serviceAccount:
   name: "llm-platform"
 
 env:
-  DB_PATH: "/data/audit.db"
+  # Now Postgres-backed (see audit_store/database.py) — this chart predates
+  # that migration and is not otherwise updated here; DATABASE_URL still
+  # needs to be wired to a real secret/value the same way admin-portal's
+  # chart would need to be (see CLAUDE.md's Helm staleness note).
+  DATABASE_URL: "postgresql://llm_user:llm_pass@postgres:5432/llm_platform"
   LOG_LEVEL: "INFO"
 
 persistence:

@@ -26,6 +26,11 @@ COPY --from=builder /install /usr/local
 COPY inference_adapter/ ./inference_adapter/
 COPY shared/            ./shared/
 
+# Non-root user
+RUN adduser --uid 1000 --disabled-password --gecos "" appuser \
+ && chown -R appuser:appuser /app
+USER appuser
+
 EXPOSE 8087 9090
 
 ENV PORT=8087 \

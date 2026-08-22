@@ -15,15 +15,15 @@ Non-streaming path (task 7.3):
     5. serialize_response(imf_response) → return HTTP 200 JSON.
        Emit ``response_sent`` audit event (outcome="pass").
 
-Streaming path (task 7.4):
-    Uses the exact same forward_to_security(imf, client) call as the
-    non-streaming path — nothing downstream (Ollama/Anthropic) produces
-    incremental tokens, the full response always comes back in one piece.
-    When payload.stream is True, that one completed response is instead
-    framed as a single OpenAI ``chat.completion.chunk`` SSE event followed
-    by ``data: [DONE]`` (see sse_single_chunk()), rather than returned as a
-    plain JSON body.
-    Emit ``response_sent`` audit event when the stream completes or errors.
+Streaming path:
+    When payload.stream is True, uses forward_to_security_stream(imf, client)
+    instead — real token-by-token relay all the way from Ollama/Anthropic
+    through inference_adapter -> intelligent_router -> security_layer
+    (which applies chunk-level PII re-masking — see
+    security_layer/pii.py's StreamingPiiMasker) -> here, translated into
+    OpenAI-compatible ``chat.completion.chunk`` SSE events (see
+    sse_relay()) ending with ``data: [DONE]``.
+    Emits ``response_sent`` audit event when the stream completes or errors.
 
 Validates: Requirements 1.1, 1.5, 1.6, 1.7, 4.1–4.13, 5.1–5.5,
            6.1–6.4, 6.5, 7.1–7.5, 9.1, 9.5
@@ -46,7 +46,7 @@ from api_gateway.schemas.audit import AuditEvent
 from api_gateway.schemas.openai import OpenAIChatRequest
 from api_gateway.services.audit import build_audit_event, emit_audit_event
 from api_gateway.services.audit_client import post_audit_event
-from api_gateway.services.downstream import DownstreamError, forward_to_security
+from api_gateway.services.downstream import DownstreamError, forward_to_security, forward_to_security_stream
 from api_gateway.services.normalizer import build_imf
 from api_gateway.services.serializer import serialize_response
 
@@ -102,43 +102,106 @@ async def validation_exception_handler(
 # ---------------------------------------------------------------------------
 # Streaming helper
 # ---------------------------------------------------------------------------
-async def sse_single_chunk(response_body: dict) -> AsyncGenerator[bytes, None]:
-    """Emit a completed OpenAI chat-completion dict as one SSE stream.
+async def sse_relay(
+    imf,
+    client: httpx.AsyncClient,
+    request_id: str,
+    method: str,
+    path: str,
+    start_time: float,
+    background_tasks: BackgroundTasks,
+) -> AsyncGenerator[bytes, None]:
+    """Relay security_layer's streaming response as OpenAI-compatible SSE.
 
-    Nothing in this pipeline generates tokens incrementally — Ollama and
-    Anthropic responses are both received in full before ``forward_to_security``
-    returns — so there is no real per-token data to stream. This sends the
-    complete response as a single ``chat.completion.chunk`` event (in the
-    ``choices[].delta`` shape SSE clients expect) followed by the ``[DONE]``
-    sentinel, which is enough for OpenAI-compatible SSE clients (e.g.
-    Continue.dev) to render the full answer at once rather than
-    token-by-token.
+    Consumes forward_to_security_stream's ND-JSON chunks
+    ({"type": "delta"|"done"|"error", ...}) and reframes each as a
+    ``chat.completion.chunk`` SSE event, ending with ``data: [DONE]``.
 
-    Args:
-        response_body: The dict produced by ``serialize_response()``.
+    The model name in each ``delta`` chunk is a best-effort placeholder
+    (``imf.request.model`` — the pinned model, if any, "auto" otherwise)
+    since ``routing.selected_model`` isn't known until the Router finishes
+    classifying/selecting a model, which only arrives in the final "done"
+    event; the final chunk uses the real selected_model once known.
 
-    Yields:
-        Two byte chunks: the ``data: {...}`` event, then ``data: [DONE]``.
+    Dispatches the ``response_sent`` audit event once the stream ends
+    (success or error) — mirrors the non-streaming path's audit shape.
     """
-    choice = response_body["choices"][0]
-    chunk = {
-        "id": response_body["id"],
-        "object": "chat.completion.chunk",
-        "created": response_body["created"],
-        "model": response_body["model"],
-        "choices": [
-            {
-                "index": 0,
-                "delta": {
-                    "role": "assistant",
-                    "content": choice["message"]["content"],
-                },
-                "finish_reason": choice["finish_reason"],
-            }
-        ],
-    }
-    yield f"data: {json.dumps(chunk)}\n\n".encode()
+    chunk_id = f"chatcmpl-{request_id}"
+    created = int(time.time())
+    placeholder_model = imf.request.model or "auto"
+
+    def _delta_chunk(content: str, model: str, finish_reason: str | None) -> bytes:
+        return (
+            "data: "
+            + json.dumps(
+                {
+                    "id": chunk_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"role": "assistant", "content": content},
+                            "finish_reason": finish_reason,
+                        }
+                    ],
+                }
+            )
+            + "\n\n"
+        ).encode()
+
+    outcome = "pass"
+    status_code = 200
+
+    try:
+        async for chunk in forward_to_security_stream(imf, client):
+            chunk_type = chunk.get("type")
+
+            if chunk_type == "delta":
+                content = chunk.get("content", "")
+                if content:
+                    yield _delta_chunk(content, placeholder_model, None)
+
+            elif chunk_type == "error":
+                outcome = "error" if chunk.get("status_code", 502) >= 500 else "block"
+                status_code = chunk.get("status_code", 502)
+                yield (
+                    "data: "
+                    + json.dumps({"error": {"code": str(status_code), "message": chunk.get("event", "internal_error")}})
+                    + "\n\n"
+                ).encode()
+                break
+
+            elif chunk_type == "done":
+                final_imf = chunk.get("imf") or {}
+                final_model = (final_imf.get("routing") or {}).get("selected_model") or placeholder_model
+                finish_reason = (final_imf.get("response") or {}).get("finish_reason") or "stop"
+                yield _delta_chunk("", final_model, finish_reason)
+                break
+
+    except DownstreamError as exc:
+        outcome = "error"
+        status_code = exc.status_code
+        yield (
+            "data: " + json.dumps({"error": {"code": str(exc.status_code), "message": "Bad gateway"}}) + "\n\n"
+        ).encode()
+
     yield b"data: [DONE]\n\n"
+
+    _dispatch_audit_event(
+        background_tasks,
+        client,
+        build_audit_event(
+            request_id=request_id,
+            event_type="response_sent",
+            method=method,
+            path=path,
+            status_code=status_code,
+            latency_ms=(time.monotonic() - start_time) * 1000,
+            outcome=outcome,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -204,11 +267,22 @@ async def chat_completions(
     )
 
     # ------------------------------------------------------------------
-    # Step 3/4 — Forward to Security Layer (same call for both streaming
-    # and non-streaming requests — nothing downstream produces incremental
-    # tokens, so "streaming" only changes how the one completed result is
-    # framed on the way back out; see sse_single_chunk()).
+    # Step 3/4 — Forward to Security Layer.
+    #
+    # Streaming requests take a completely different downstream call
+    # (forward_to_security_stream, real token-by-token relay — see
+    # sse_relay()) since nothing about them can be represented as a single
+    # request/response round trip; audit dispatch for the streaming path
+    # happens inside sse_relay() once the stream ends, not here.
     # ------------------------------------------------------------------
+    if payload.stream:
+        return StreamingResponse(
+            content=sse_relay(imf, client, request_id, method, path, start_time, background_tasks),
+            media_type="text/event-stream",
+            status_code=200,
+            background=background_tasks,
+        )
+
     try:
         imf_response = await forward_to_security(imf, client)
     except DownstreamError as exc:
@@ -259,12 +333,5 @@ async def chat_completions(
             outcome="pass",
         ),
     )
-
-    if payload.stream:
-        return StreamingResponse(
-            content=sse_single_chunk(response_body),
-            media_type="text/event-stream",
-            status_code=200,
-        )
 
     return JSONResponse(status_code=200, content=response_body)

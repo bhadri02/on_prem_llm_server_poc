@@ -11,11 +11,11 @@ import * as portalClient from "../api/portalClient";
 
 vi.mock("../api/portalClient", () => ({
   getModels: vi.fn(),
-  postChat: vi.fn(),
+  streamPlaygroundChat: vi.fn(),
 }));
 
 const mockGetModels = portalClient.getModels as ReturnType<typeof vi.fn>;
-const mockPostChat = portalClient.postChat as ReturnType<typeof vi.fn>;
+const mockStreamPlaygroundChat = portalClient.streamPlaygroundChat as ReturnType<typeof vi.fn>;
 
 function renderView() {
   return render(
@@ -57,12 +57,14 @@ describe("PlaygroundView", () => {
     expect(sendBtn).toBeDisabled();
   });
 
-  it("shows error banner when postChat returns an API error", async () => {
-    const { ApiError } = await import("../types");
+  it("shows error banner when the stream reports an in-band error", async () => {
     mockGetModels.mockResolvedValue({
       models: [{ name: "llama3", version: "1", backend: "ollama", tasks: [], status: "active" }],
     });
-    mockPostChat.mockRejectedValue(new ApiError(422, "temperature out of range"));
+    mockStreamPlaygroundChat.mockImplementation((_req, handlers) => {
+      handlers.onError("temperature out of range");
+      return () => {};
+    });
 
     renderView();
     await waitFor(() => screen.getByRole("combobox", { name: /select model/i }));
@@ -77,17 +79,20 @@ describe("PlaygroundView", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("alert")).toBeInTheDocument();
-      expect(screen.getByText(/422/)).toBeInTheDocument();
+      expect(screen.getByText(/temperature out of range/)).toBeInTheDocument();
     });
   });
 
-  it("shows assistant response after successful postChat", async () => {
+  it("shows assistant response streamed in as deltas arrive", async () => {
     mockGetModels.mockResolvedValue({
       models: [{ name: "llama3", version: "1", backend: "ollama", tasks: [], status: "active" }],
     });
-    mockPostChat.mockResolvedValue({
-      request_id: "uuid-test-123",
-      choices: [{ message: { role: "assistant", content: "Hello from llama3!" } }],
+    mockStreamPlaygroundChat.mockImplementation((_req, handlers) => {
+      handlers.onId("uuid-test-123");
+      handlers.onDelta("Hello ");
+      handlers.onDelta("from llama3!");
+      handlers.onDone("stop");
+      return () => {};
     });
 
     renderView();

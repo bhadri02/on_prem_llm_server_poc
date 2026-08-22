@@ -1,61 +1,48 @@
 """
 Pydantic schemas for the Internal Message Format (IMF) as consumed by the Cache Service.
 
+The leaf blocks (IMFMessage, IMFUsage, IMFResponse, IMFGovernance,
+IMFRouting) are re-exported from shared.imf — see that module's docstring
+for why those used to be a hand-maintained per-service copy and why that
+was risky.
+
+IMFRequest and IMFDocument stay defined here: the Cache Service's contract
+is deliberately narrower than the other services' full envelope — it never
+needs a `user` block at all (it isn't a document-preserving hop; the
+Intelligent Router only reads specific fields back off its response, it
+doesn't reconstruct the full IMF from it), and requires task_type/messages
+where other services don't. Every class here sets extra="allow" so a field
+this file doesn't know about survives this service's parse/dump round trip
+unchanged (see shared.imf's docstring for why that matters).
+
 Defines:
-  IMFMessage     — a single chat message with role and content
-  IMFUsage       — token usage statistics
-  IMFResponse    — the LLM response payload (content, finish_reason, usage)
-  IMFGovernance  — governance metadata including PII detection results
-  IMFRouting     — model routing decisions
   IMFRequest     — the inbound request fields (messages, task_type, model, etc.)
   IMFDocument    — the full IMF envelope the Cache Service accepts on every endpoint
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-
-class IMFMessage(BaseModel):
-    """A single message in the conversation history."""
-
-    role: str
-    content: str
-
-
-class IMFUsage(BaseModel):
-    """Token usage counters returned by the inference layer."""
-
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-
-
-class IMFResponse(BaseModel):
-    """The LLM-generated response, stored in and retrieved from the cache."""
-
-    content: str | None = None
-    finish_reason: str | None = None
-    usage: IMFUsage | None = None
-
-
-class IMFGovernance(BaseModel):
-    """Governance metadata.  Only the PII field list is required for cache operation."""
-
-    pii_fields_detected: list[str] = []
-    # Additional governance fields are optional — the cache layer does not act on them
-    # but must preserve them across the IMF envelope.
-    pii_masked: bool | None = None
-    injection_score: float | None = None
-    jailbreak_score: float | None = None
-    content_safety_passed: bool | None = None
-    human_approval_required: bool | None = None
-    human_approval_status: str | None = None
-    policy_decisions: list | None = None
+from shared.imf import (  # noqa: F401
+    IMFGovernance,
+    IMFMessage,
+    IMFResponse,
+    IMFUsage,
+)
 
 
 class IMFRouting(BaseModel):
-    """Model routing decisions made by the Intelligent Router."""
+    """Model routing decisions made by the Intelligent Router.
+
+    selected_model is required here (no default) — the Cache Service's own
+    business logic needs a real cache key input and returns 422 if it's
+    missing; every other service's copy of this block makes it optional
+    since they only reject its absence conditionally (e.g. inference_adapter
+    wants to return a custom-shaped 422 rather than Pydantic's default one).
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     selected_model: str
     routing_mode: str | None = None
@@ -64,6 +51,8 @@ class IMFRouting(BaseModel):
 
 class IMFRequest(BaseModel):
     """The consumer's inbound request fields carried inside the IMF envelope."""
+
+    model_config = ConfigDict(extra="allow")
 
     messages: list[IMFMessage]
     task_type: str
@@ -80,6 +69,8 @@ class IMFDocument(BaseModel):
     Only the fields the Cache Service reads are strictly required; all other
     standard IMF envelope fields are accepted but not acted upon.
     """
+
+    model_config = ConfigDict(extra="allow")
 
     request_id: str | None = None
     request: IMFRequest

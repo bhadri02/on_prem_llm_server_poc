@@ -26,7 +26,19 @@ class Settings(BaseSettings):
     # Optional with defaults
     # ------------------------------------------------------------------
     log_level: str = "INFO"         # LOG_LEVEL
+    # How often to retry audit events that exhausted post_audit_event's own
+    # retries (see audit_client.py's _pending queue).
+    audit_flush_interval_seconds: int = 30  # AUDIT_FLUSH_INTERVAL_SECONDS
     pii_enabled: bool = True        # PII_ENABLED (default true)
+    # Comma-separated Presidio entity types to scan for. Broadened past the
+    # original 3-entity POC default (EMAIL_ADDRESS/PHONE_NUMBER/PERSON only —
+    # a real compliance gap for anything handling SSNs, card numbers, etc.);
+    # override via PII_ENTITIES for a narrower or jurisdiction-specific set.
+    # See Presidio's predefined recognizers for the full supported list.
+    pii_entities: str = (
+        "EMAIL_ADDRESS,PHONE_NUMBER,PERSON,CREDIT_CARD,US_SSN,IBAN_CODE,"
+        "IP_ADDRESS,LOCATION,US_BANK_NUMBER,US_PASSPORT,US_DRIVER_LICENSE"
+    )  # PII_ENTITIES
     # Read/write timeout (seconds) for the call to intelligent_router — this
     # budget covers the ENTIRE downstream chain (Router + cache lookup +
     # inference dispatch), not just the Router's own processing. CPU-only
@@ -47,6 +59,11 @@ class Settings(BaseSettings):
                 f"PII_ENABLED must be 'true' or 'false' (case-insensitive), got: {v!r}"
             )
         return v
+
+    @property
+    def pii_entities_list(self) -> list[str]:
+        """Parsed, upper-cased PII_ENTITIES, e.g. ['EMAIL_ADDRESS', 'PERSON']."""
+        return [e.strip().upper() for e in self.pii_entities.split(",") if e.strip()]
 
 
 # Module-level singleton — import this directly from other modules:

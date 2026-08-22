@@ -35,7 +35,7 @@ flowchart TB
 
     subgraph Edge["Edge"]
         NGINX["nginx<br/>(reverse proxy, :80)"]
-        PortalUI["portal_ui<br/>(React SPA, internal :80)"]
+        PortalUI["portal_ui<br/>(React SPA, internal :8080, non-root nginx)"]
     end
 
     subgraph Pipeline["Request Pipeline"]

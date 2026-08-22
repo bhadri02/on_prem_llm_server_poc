@@ -103,6 +103,7 @@ async def login(body: LoginRequest, response: Response, db: DBSession = Depends(
         value=session_id,
         httponly=True,
         samesite="lax",
+        secure=settings.SESSION_COOKIE_SECURE,
         max_age=settings.SESSION_TTL_HOURS * 3600,
     )
 

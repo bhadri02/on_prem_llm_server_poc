@@ -14,6 +14,7 @@ class ChatRequest(BaseModel):
     model: str = Field(..., description="Model name; must be non-empty")
     messages: List[Message] = Field(..., min_length=1, description="Conversation messages; at least one required")
     temperature: float = Field(0.7, ge=0.0, le=2.0, description="Sampling temperature (0.0–2.0)")
+    stream: bool = Field(False, description="Request a real-time SSE stream instead of a single JSON response")
 
     @field_validator("model")
     @classmethod

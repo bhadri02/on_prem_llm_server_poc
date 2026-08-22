@@ -248,7 +248,7 @@ async def test_pii_masking_forwarded(security_test_app):
         return 200, ROUTER_OK_BODY
 
     # Mock mask_messages to simulate PII detection without real Presidio
-    def _mock_mask_messages(messages, analyzer, anonymizer, pii_enabled):
+    def _mock_mask_messages(messages, analyzer, anonymizer, pii_enabled, entities=None):
         masked = [{"role": m["role"], "content": "[REDACTED_EMAIL_ADDRESS]"} for m in messages]
         return masked, ["EMAIL_ADDRESS"]
 

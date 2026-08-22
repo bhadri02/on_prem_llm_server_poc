@@ -88,6 +88,27 @@ intentionally are NOT refactored into a shared library — `deploy-onprem.sh`'s
 whole point is being a single file you can `curl` onto a server that has
 no repo yet, so if you change the shared deploy logic, update both files.
 
+### `backup-onprem.sh` / `restore-onprem.sh`
+
+Automates the manual backup commands from `docs/DEPLOYMENT.md`'s "Back up
+persistent data" section: Postgres (`pg_dump --clean --if-exists`), the
+audit trail, and the model registry catalog — the three things that
+actually need backing up (Ollama model weights are skipped; they're large
+and trivially re-pulled). Uses the fixed container names and compose
+project name (`llm-platform-prod`) that `docker-compose.prod.yml` sets, so
+it doesn't need to be run from the deployment directory.
+
+```bash
+chmod +x scripts/backup-onprem.sh scripts/restore-onprem.sh
+./scripts/backup-onprem.sh                        # backs up to ./backups/<timestamp>/
+./scripts/backup-onprem.sh --dest /mnt/backups --retention-days 30
+./scripts/restore-onprem.sh ./backups/20260818T020000   # DESTRUCTIVE — confirms first
+```
+
+For a scheduled nightly backup, add a crontab entry (see the script's own
+header comment for the exact line) — this repo does not install one for
+you.
+
 ---
 
 ## Local development (Windows)

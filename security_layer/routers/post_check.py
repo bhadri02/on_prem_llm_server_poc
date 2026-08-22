@@ -20,17 +20,19 @@ from fastapi.responses import JSONResponse
 
 from security_layer import metrics
 from security_layer.audit_client import post_audit_event
+from security_layer.config import settings
 from security_layer.logging_config import get_logger
 from security_layer.models import IMFRequest
 from security_layer.pipeline import run_post_pipeline
-from security_layer.pii import POC_ENTITIES
 
 logger = get_logger(__name__)
 
 router = APIRouter()
 
-# Entity types that have a dedicated label in the PII counter.
-_KNOWN_ENTITY_TYPES: frozenset[str] = frozenset(POC_ENTITIES)
+# Entity types that have a dedicated label in the PII counter — sourced from
+# the configured PII_ENTITIES (see security_layer.config.Settings) so this
+# stays in sync with whatever entities the pipeline is actually scanning for.
+_KNOWN_ENTITY_TYPES: frozenset[str] = frozenset(settings.pii_entities_list)
 
 
 @router.post("/security/post-check")

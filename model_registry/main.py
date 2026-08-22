@@ -9,6 +9,7 @@ Validates: Requirements 1.2, 7.2, 8.1, 8.2
 """
 
 import json
+import sys
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -30,8 +31,11 @@ async def lifespan(app: FastAPI):
     Async context manager for application lifespan events.
 
     Startup:
-      - Reads settings; emits a structured WARNING to stdout if REGISTRY_API_KEY
-        is unset (POC convenience mode — Req 8.2).
+      - Reads settings; fails fast (sys.exit(1)) if REGISTRY_API_KEY is unset,
+        unless the operator has explicitly opted into running without auth via
+        ALLOW_UNAUTHENTICATED_REGISTRY=true (local/dev convenience only).
+      - Emits a structured WARNING to stdout if REGISTRY_ENCRYPTION_KEY is
+        unset — provider api_key values will be stored in plaintext.
       - Instantiates JsonFileManager and calls storage.load(); if storage is
         unrecoverable, load() calls sys.exit(1) before yielding.
       - Stores the storage instance on app.state so routers can access it via
@@ -47,17 +51,46 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
 
     if not settings.registry_api_key:
-        # Req 8.2 — emit structured warning; enforcement is disabled in POC mode
+        if settings.allow_unauthenticated_registry:
+            print(
+                json.dumps({
+                    "level": "WARNING",
+                    "event": "api_key_not_configured",
+                    "message": (
+                        "REGISTRY_API_KEY unset; ALLOW_UNAUTHENTICATED_REGISTRY=true "
+                        "so auth enforcement is disabled. Do not run this way in production."
+                    ),
+                }),
+                flush=True,
+            )
+        else:
+            print(
+                json.dumps({
+                    "level": "ERROR",
+                    "event": "registry_api_key_required",
+                    "message": (
+                        "REGISTRY_API_KEY must be set. To explicitly run without "
+                        "auth for local/dev use, set ALLOW_UNAUTHENTICATED_REGISTRY=true."
+                    ),
+                }),
+                flush=True,
+            )
+            sys.exit(1)
+
+    if not settings.registry_encryption_key:
         print(
             json.dumps({
                 "level": "WARNING",
-                "event": "api_key_not_configured",
-                "message": "REGISTRY_API_KEY unset; auth enforcement disabled.",
+                "event": "encryption_key_not_configured",
+                "message": (
+                    "REGISTRY_ENCRYPTION_KEY unset; provider api_key values will be "
+                    "stored in plaintext in models.json."
+                ),
             }),
             flush=True,
         )
 
-    storage = JsonFileManager(settings.storage_path)
+    storage = JsonFileManager(settings.storage_path, settings.registry_encryption_key or None)
     storage.load()  # may call sys.exit(1) if unrecoverable
 
     app.state.storage = storage

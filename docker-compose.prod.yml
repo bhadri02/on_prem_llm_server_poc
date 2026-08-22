@@ -45,6 +45,14 @@ x-python-healthcheck: &python-healthcheck
   retries: 12
   start_period: 20s
 
+# Bounds each container's own default json-file log driver so a noisy/crashing
+# service can't silently fill the host's disk — applied to every service below.
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   # ---------------------------------------------------------------------
   # Infrastructure
@@ -53,6 +61,12 @@ services:
     image: redis:7-alpine
     container_name: llm-redis
     restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
     volumes:
       - redis_data:/data
     healthcheck:
@@ -65,6 +79,12 @@ services:
     image: postgres:16-alpine
     container_name: llm-postgres
     restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
     environment:
       POSTGRES_DB: llm_platform
       POSTGRES_USER: llm_user
@@ -81,6 +101,16 @@ services:
     image: ollama/ollama:latest
     container_name: llm-ollama
     restart: unless-stopped
+    logging: *default-logging
+    # No CPU/memory limit here by default — model weight size varies widely
+    # by what's configured in OLLAMA_DEFAULT_MODEL/OLLAMA_EXTRA_MODELS below;
+    # a fixed cap here would silently OOM-kill inference on a larger model.
+    # Set one explicitly once you know your model mix, e.g.:
+    #   deploy:
+    #     resources:
+    #       limits:
+    #         cpus: "4"
+    #         memory: 8G
     volumes:
       - ollama_data:/root/.ollama
     healthcheck:
@@ -99,11 +129,33 @@ services:
     #           count: all
     #           capabilities: [gpu]
 
+  # Distributed tracing backend — receives OTLP spans from every service
+  # below (TRACING_ENABLED=true / OTEL_ENDPOINT). All-in-one is fine at
+  # on-prem POC/small-team scale; swap for a real OTel Collector + trace
+  # backend if you need durable storage or multi-node scale. Optional:
+  # every service gracefully no-ops if this container isn't running.
+  # UI: http://<server-ip>:16686
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: llm-jaeger
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+
   # One-shot job: pulls the configured model(s) into the ollama volume, then
   # exits. Safe to re-run (`ollama pull` is a no-op if already present).
   ollama-model-pull:
     image: ollama/ollama:latest
     container_name: llm-ollama-model-pull
+    logging: *default-logging
     depends_on:
       ollama:
         condition: service_healthy
@@ -128,9 +180,16 @@ services:
       dockerfile: model_registry/Dockerfile
     container_name: llm-model-registry
     restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
     environment:
       LOG_LEVEL: INFO
       REGISTRY_API_KEY: ${REGISTRY_API_KEY:?REGISTRY_API_KEY must be set in .env.prod}
+      REGISTRY_ENCRYPTION_KEY: ${REGISTRY_ENCRYPTION_KEY:?REGISTRY_ENCRYPTION_KEY must be set in .env.prod}
     volumes:
       - model_registry_data:/data
     healthcheck:
@@ -143,11 +202,23 @@ services:
       dockerfile: audit_store/Dockerfile
     container_name: llm-audit-store
     restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       LOG_LEVEL: INFO
       AUDIT_API_KEY: ${AUDIT_API_KEY:?AUDIT_API_KEY must be set in .env.prod}
-    volumes:
-      - audit_store_data:/data
+      # Same Postgres database as admin-portal — distinguished by table name
+      # (audit_events vs. users/roles/api_keys/...), not a separate database.
+      DATABASE_URL: "postgresql://llm_user:${POSTGRES_PASSWORD}@postgres:5432/llm_platform"
+      # 0 (default) = keep audit history forever, no automatic purge.
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-0}
     healthcheck:
       <<: *python-healthcheck
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9200/health')"]
@@ -158,6 +229,12 @@ services:
       dockerfile: admin_portal/Dockerfile
     container_name: llm-admin-portal
     restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
     depends_on:
       postgres:
         condition: service_healthy
@@ -178,6 +255,10 @@ services:
       OLLAMA_BASE_URL: "http://ollama:11434"
       PROMETHEUS_URL: "http://prometheus:9090"
       GRAFANA_URL: "http://grafana:3000"
+      # Set to "true" in .env.prod once a TLS-terminating reverse proxy fronts
+      # this deployment — defaults to false so plain-HTTP setups aren't
+      # silently locked out of login (browsers drop Secure cookies over HTTP).
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
     ports:
       # Published directly (no in-stack nginx — see docker-compose.prod.yml's
       # header note) so /portal/* is reachable on its own well-known port,
@@ -187,7 +268,11 @@ services:
       - "8084:8084"
     healthcheck:
       <<: *python-healthcheck
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8084/portal/health')"]
+      # /portal/ready (not /portal/health) — actually checks Postgres
+      # connectivity, so router/api-gateway/agent-framework's
+      # depends_on: condition: service_healthy don't start hammering
+      # admin_portal before its DB is actually reachable.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8084/portal/ready')"]
 
   security-layer:
     build:
@@ -195,6 +280,12 @@ services:
       dockerfile: security_layer/Dockerfile
     container_name: llm-security-layer
     restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
     depends_on:
       audit-store:
         condition: service_healthy
@@ -206,6 +297,8 @@ services:
       INJECTION_PATTERNS_PATH: "injection_patterns.yaml"
       PII_ENABLED: "true"
       ROUTER_TIMEOUT_SECONDS: "600"
+      TRACING_ENABLED: ${TRACING_ENABLED:-true}
+      OTEL_ENDPOINT: "http://jaeger:4317"
     healthcheck:
       <<: *python-healthcheck
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health')"]
@@ -216,10 +309,18 @@ services:
       dockerfile: intelligent_router/Dockerfile
     container_name: llm-router
     restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
     depends_on:
       audit-store:
         condition: service_healthy
       admin-portal:
+        condition: service_healthy
+      model-registry:
         condition: service_healthy
     environment:
       LOG_LEVEL: INFO
@@ -233,6 +334,12 @@ services:
       INFERENCE_TIMEOUT_SECONDS: "600"
       ADMIN_PORTAL_URL: "http://admin-portal:8084"
       ADMIN_PORTAL_INTERNAL_KEY: ${ADMIN_PORTAL_INTERNAL_KEY}
+      # Live-polled so a model registered via POST /portal/models with
+      # status="active" becomes routable without a matrix.yaml edit/restart
+      # — see intelligent_router/services/model_registry_resolver.py.
+      MODEL_REGISTRY_URL: "http://model-registry:5000"
+      TRACING_ENABLED: ${TRACING_ENABLED:-true}
+      OTEL_ENDPOINT: "http://jaeger:4317"
     volumes:
       # Bind-mount the routable model/policy/task-classifier config so it can
       # be edited without rebuilding the image (and to guarantee the current
@@ -256,6 +363,12 @@ services:
       dockerfile: cache_service/Dockerfile
     container_name: llm-cache
     restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
     depends_on:
       redis:
         condition: service_healthy
@@ -267,6 +380,8 @@ services:
       CACHE_TTL_SECONDS: "60"
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
+      TRACING_ENABLED: ${TRACING_ENABLED:-true}
+      OTEL_ENDPOINT: "http://jaeger:4317"
     healthcheck:
       <<: *python-healthcheck
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8086/health')"]
@@ -277,6 +392,12 @@ services:
       dockerfile: inference_adapter/Dockerfile
     container_name: llm-inference-adapter
     restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
     depends_on:
       ollama-model-pull:
         condition: service_completed_successfully
@@ -289,6 +410,8 @@ services:
       OLLAMA_TIMEOUT_SECONDS: "600"
       MODEL_REGISTRY_URL: "http://model-registry:5000"
       REGISTRY_API_KEY: ${REGISTRY_API_KEY}
+      TRACING_ENABLED: ${TRACING_ENABLED:-true}
+      OTEL_ENDPOINT: "http://jaeger:4317"
     healthcheck:
       <<: *python-healthcheck
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8087/health')"]
@@ -299,6 +422,12 @@ services:
       dockerfile: services/agent-framework/Dockerfile
     container_name: llm-agent-framework
     restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
     depends_on:
       router:
         condition: service_healthy
@@ -307,6 +436,8 @@ services:
       ROUTER_URL: "http://router:8082"
       GATEWAY_API_KEY: ${GATEWAY_API_KEY}
       MAX_AGENT_STEPS: "10"
+      TRACING_ENABLED: ${TRACING_ENABLED:-true}
+      OTEL_ENDPOINT: "http://jaeger:4317"
     healthcheck:
       <<: *python-healthcheck
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/health')"]
@@ -317,6 +448,12 @@ services:
       dockerfile: api_gateway/Dockerfile
     container_name: llm-api-gateway
     restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
     depends_on:
       security-layer:
         condition: service_healthy
@@ -338,6 +475,8 @@ services:
       RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
       AUDIT_STORE_URL: "http://audit-store:9200"
       AUDIT_API_KEY: ${AUDIT_API_KEY}
+      TRACING_ENABLED: ${TRACING_ENABLED:-true}
+      OTEL_ENDPOINT: "http://jaeger:4317"
     ports:
       # Published directly (no in-stack nginx — see docker-compose.prod.yml's
       # header note). Point your own existing reverse proxy at
@@ -368,13 +507,21 @@ services:
       dockerfile: portal_ui/Dockerfile
     container_name: llm-portal-ui
     restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
     ports:
-      - "${PORTAL_UI_PORT:-18080}:80"
+      - "${PORTAL_UI_PORT:-18080}:8080"
     healthcheck:
       # 127.0.0.1, not localhost — BusyBox wget in this image resolves
       # "localhost" to ::1 first, and nginx only listens on 0.0.0.0 (IPv4),
       # so the IPv6 attempt fails to connect even though the app is healthy.
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/"]
+      # Port 8080, not 80 — the nginx-unprivileged base image listens on
+      # 8080 so it can bind without root (see portal_ui/Dockerfile).
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -384,5 +531,4 @@ volumes:
   redis_data:
   postgres_data:
   ollama_data:
-  audit_store_data:
   model_registry_data:

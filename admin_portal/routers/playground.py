@@ -14,6 +14,15 @@ POST /playground/chat
     On upstream network failure or timeout, returns HTTP 502 with an
     ``ErrorResponse(error="upstream_unavailable", upstream="api-gateway")``.
 
+    When ``stream=true``, relays the API Gateway's SSE response chunk-by-
+    chunk instead (see services/proxy.py's sse_relay_with_inband_error,
+    shared with routers/chat.py's own streaming path) — failures are then
+    signalled in-band rather than via HTTP status, since the streaming
+    response has already committed to 200 by the time a failure can occur.
+    Metrics below are skipped on this path (consistent with chat.py's
+    streaming branch), since durable audit/latency accounting for it lives
+    in api_gateway's own response_sent audit event, not here.
+
 Metrics
 -------
 - ``llm_portal_requests_total``   incremented on every call (success or 502).
@@ -31,7 +40,7 @@ import time
 
 import httpx
 from fastapi import APIRouter, Depends
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from admin_portal.config import settings
 from admin_portal.metrics import (
@@ -42,7 +51,7 @@ from admin_portal.metrics import (
 )
 from admin_portal.schemas.errors import ErrorResponse
 from admin_portal.schemas.playground import ChatRequest
-from admin_portal.services.proxy import ProxyUnavailableError, async_proxy
+from admin_portal.services.proxy import ProxyUnavailableError, async_proxy, sse_relay_with_inband_error
 from admin_portal.services.session_auth import get_current_session
 
 # ---------------------------------------------------------------------------
@@ -83,6 +92,14 @@ async def playground_chat(body: ChatRequest) -> Response:
     """
     upstream_url = f"{settings.API_GATEWAY_URL}/v1/chat/completions"
     headers = {"X-API-Key": settings.GATEWAY_API_KEY}
+
+    if body.stream:
+        return StreamingResponse(
+            sse_relay_with_inband_error(
+                _client, "POST", upstream_url, headers=headers, json=body.model_dump(), timeout=_PROXY_TIMEOUT
+            ),
+            media_type="text/event-stream",
+        )
 
     t_start = time.monotonic()
     try:

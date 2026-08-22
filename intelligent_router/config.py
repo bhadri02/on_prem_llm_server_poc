@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # Optional with defaults
     # ------------------------------------------------------------------
     audit_api_key: str = ""                                        # AUDIT_API_KEY
+    # How often to retry audit events that exhausted post_audit_event's own
+    # retries (see audit_client.py's _pending queue).
+    audit_flush_interval_seconds: int = 30                         # AUDIT_FLUSH_INTERVAL_SECONDS
     # Optional (not required, unlike model_matrix_path/task_rules_path) so
     # existing deployments/tests that predate Phase 2 (RBAC) keep working
     # unchanged. Startup still fails fast if the file at this path is
@@ -38,6 +41,14 @@ class Settings(BaseSettings):
     admin_portal_url: str = "http://admin-portal:8084"             # ADMIN_PORTAL_URL
     admin_portal_internal_key: str = ""                             # ADMIN_PORTAL_INTERNAL_KEY
     policy_cache_ttl_seconds: int = 15                              # POLICY_CACHE_TTL_SECONDS
+    # Used to poll model_registry for live "active" models — see
+    # services/model_registry_resolver.py. model_matrix.yaml (loaded at
+    # startup) is still the source of truth for task_defaults and remains
+    # the offline fallback if model_registry is ever unreachable; this only
+    # makes newly-registered models routable (by pin or entitlement)
+    # without a matrix.yaml edit + Router restart.
+    model_registry_url: str = "http://model-registry:5000"          # MODEL_REGISTRY_URL
+    model_registry_cache_ttl_seconds: int = 30                     # MODEL_REGISTRY_CACHE_TTL_SECONDS
     cache_url: str = "http://cache:8086"                          # CACHE_URL
     inference_adapter_url: str = "http://inference-adapter:8087"  # INFERENCE_ADAPTER_URL
     log_level: str = "INFO"                                        # LOG_LEVEL

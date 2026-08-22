@@ -26,9 +26,27 @@ Intelligent Router fixtures:
     metric counters between tests to prevent counter bleed.
 """
 
+import os
 import re
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
+
+# security_layer.config.Settings and audit_store.config.Settings are both
+# instantiated eagerly at module import time with required (no-default)
+# fields — importing either module without these env vars already set
+# raises ValidationError immediately. conftest.py is guaranteed to load
+# before every test module in this tree, so setting defaults here (rather
+# than relying on some other, unrelated test module happening to run first
+# and set them as a side effect via its own os.environ.setdefault) makes
+# collection order-independent regardless of which subset of test files a
+# given `pytest` invocation targets.
+for _var, _value in {
+    "DOWNSTREAM_ROUTER_URL": "http://router:8082",
+    "AUDIT_STORE_URL": "http://audit-store:9200",
+    "AUDIT_API_KEY": "test-key",
+    "INJECTION_PATTERNS_PATH": "injection_patterns.yaml",
+}.items():
+    os.environ.setdefault(_var, _value)
 
 import pytest
 from httpx import ASGITransport, AsyncClient

@@ -1,7 +1,7 @@
 # audit_store/Dockerfile
 # Build context: repo root  (docker build -f audit_store/Dockerfile .)
 #
-# Pure SQLite service — no ML packages. Builds fast.
+# Postgres-backed service — no ML packages. Builds fast.
 
 # ── Stage 1: builder ──────────────────────────────────────────────────────────
 FROM python:3.12-slim AS builder
@@ -25,6 +25,11 @@ COPY --from=builder /install /usr/local
 # Copy application source
 COPY audit_store/ ./audit_store/
 COPY shared/      ./shared/
+
+# Non-root user.
+RUN adduser --uid 1000 --disabled-password --gecos "" appuser \
+ && chown -R appuser:appuser /app
+USER appuser
 
 EXPOSE 9200 9090
 

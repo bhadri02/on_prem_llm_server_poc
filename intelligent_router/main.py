@@ -17,6 +17,7 @@ or HTTP 422 (other validation errors).
 Requirements: 1.7, 1.8, 2.5, 2.6, 3.4, 3.5, 14.2, 14.3, 14.4, 14.7, 14.8, 15.1, 15.2
 """
 
+import asyncio
 import sys
 from contextlib import asynccontextmanager
 
@@ -26,6 +27,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from prometheus_client import make_asgi_app
 
+from intelligent_router.audit_client import flush_pending_audit_events
 from intelligent_router.config import settings
 from intelligent_router.logging_config import get_logger
 from intelligent_router.model_selector import load_model_matrix
@@ -54,6 +56,20 @@ if settings is not None and settings.tracing_enabled:
     configure_tracing("router", settings.otel_endpoint)
 
 logger = get_logger(__name__)
+
+
+async def _audit_flush_loop(app: FastAPI) -> None:
+    """Background loop: periodically retries audit events that exhausted
+    post_audit_event's own retries (see audit_client.py's _pending queue).
+    Never crashes the service on failure."""
+    while True:
+        await asyncio.sleep(settings.audit_flush_interval_seconds)
+        try:
+            await flush_pending_audit_events(
+                settings.audit_store_url, app.state.http_client, settings.audit_api_key
+            )
+        except Exception as exc:  # noqa: BLE001 — never let this loop die
+            logger.error("audit_flush_loop_failed", extra={"extra_fields": {"error": str(exc)}})
 
 
 @asynccontextmanager
@@ -145,6 +161,8 @@ async def lifespan(app: FastAPI):
     app.state.policy_matrix = policy_matrix
     app.state.http_client = http_client
 
+    flush_task = asyncio.create_task(_audit_flush_loop(app))
+
     logger.info(
         "Intelligent Router started",
         extra={
@@ -159,8 +177,13 @@ async def lifespan(app: FastAPI):
     yield
 
     # ------------------------------------------------------------------
-    # Shutdown: close the shared HTTP client
+    # Shutdown: cancel the audit flush loop, close the shared HTTP client
     # ------------------------------------------------------------------
+    flush_task.cancel()
+    try:
+        await flush_task
+    except asyncio.CancelledError:
+        pass
     await http_client.aclose()
     logger.info("Intelligent Router stopped")
 

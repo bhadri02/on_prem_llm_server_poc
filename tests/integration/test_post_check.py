@@ -95,7 +95,7 @@ async def test_happy_path_pii_in_response(security_test_app):
     imf = make_valid_imf(response_content="Contact us at admin@example.com for help.")
 
     # Mock mask_text to simulate EMAIL_ADDRESS detection
-    def _mock_mask_text(text, analyzer, anonymizer, pii_enabled):
+    def _mock_mask_text(text, analyzer, anonymizer, pii_enabled, entities=None):
         return "[REDACTED_EMAIL_ADDRESS] for help.", ["EMAIL_ADDRESS"]
 
     with patch(

@@ -27,6 +27,11 @@ COPY shared/ ./shared/
 # Ensure start.sh is executable and has Unix line endings (strip Windows \r)
 RUN sed -i 's/\r$//' ./start.sh && chmod +x ./start.sh
 
+# Non-root user
+RUN adduser --uid 1000 --disabled-password --gecos "" appuser \
+ && chown -R appuser:appuser /app
+USER appuser
+
 ENV PYTHONPATH=/app \
     PORT=8083 \
     METRICS_PORT=9090

@@ -14,14 +14,43 @@ Requirements: 9.1, 9.3, 9.5
 import pytest
 
 
-def test_configure_tracing_no_otel_installed():
-    """configure_tracing() must silently no-op when opentelemetry-* is not installed."""
+def test_configure_tracing_does_not_leak_global_instrumentation():
+    """configure_tracing() must never raise, and must never leave real
+    OTel instrumentation active for the rest of the test process.
+
+    Some services' requirements.txt now pin the opentelemetry-* packages
+    (needed for TRACING_ENABLED=true to actually do anything in
+    production) — so this test can no longer rely on ImportError to make
+    calling the real configure_tracing() a safe no-op the way it used to
+    when those packages simply weren't installed anywhere. Calling it for
+    real here would call FastAPIInstrumentor().instrument() /
+    HTTPXClientInstrumentor().instrument() with no scoped `app=`, which
+    globally monkey-patches fastapi.FastAPI.__init__ and httpx's transport
+    for the rest of this pytest process — corrupting every other test that
+    creates a FastAPI app or mocks httpx afterward. Mock out every
+    side-effecting call so this test only verifies "doesn't raise" without
+    that blast radius.
+    """
     from shared.observability.middleware import configure_tracing
 
-    # Calling configure_tracing() when OTel is not installed must NOT raise.
-    # The function has a top-level try/except ImportError that returns early.
-    configure_tracing("test_service", "http://otel-collector:4317")
-    # If we get here without exception, the requirement is satisfied.
+    try:
+        import opentelemetry.sdk.trace  # noqa: F401
+    except ImportError:
+        # Not installed in this environment — exercises the ImportError
+        # guard inside configure_tracing() directly, no mocking needed.
+        configure_tracing("test_service", "http://otel-collector:4317")
+        return
+
+    from unittest.mock import patch
+
+    with patch("opentelemetry.sdk.trace.export.BatchSpanProcessor"), \
+         patch(
+             "opentelemetry.exporter.otlp.proto.grpc.trace_exporter.OTLPSpanExporter"
+         ), \
+         patch("opentelemetry.trace.set_tracer_provider"), \
+         patch("opentelemetry.instrumentation.httpx.HTTPXClientInstrumentor"), \
+         patch("opentelemetry.instrumentation.fastapi.FastAPIInstrumentor"):
+        configure_tracing("test_service", "http://otel-collector:4317")
 
 
 def test_set_llm_span_attributes_robustness():

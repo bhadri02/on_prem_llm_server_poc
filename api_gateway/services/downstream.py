@@ -9,6 +9,9 @@ Validates: Requirements 5.1–5.5
 
 from __future__ import annotations
 
+import json
+from typing import AsyncIterator
+
 import httpx
 
 from api_gateway.config import get_settings
@@ -70,3 +73,59 @@ async def forward_to_security(
         raise DownstreamError(502)
 
     return IMFDocument.model_validate(payload)
+
+
+async def forward_to_security_stream(
+    imf: IMFDocument,
+    client: httpx.AsyncClient,
+) -> AsyncIterator[dict]:
+    """Streaming counterpart to forward_to_security.
+
+    POSTs to ``{security_url}/security/check/stream`` and yields each
+    parsed newline-delimited-JSON line unchanged (see security_layer's
+    streaming wire protocol — routers/pre_check.py's module docstring):
+
+        {"type": "delta", "content": "<text>"}
+        {"type": "done", "imf": {...}}
+        {"type": "error", "event": "<code>", "status_code": <int>, ...}
+
+    The caller (routers/chat.py) is responsible for translating this into
+    OpenAI-compatible SSE frames — this function only relays the security
+    layer's stream unchanged.
+
+    Raises:
+        DownstreamError(502): on any connection failure, timeout, non-200
+            response, or a stream line that isn't valid JSON.
+    """
+    settings = get_settings()
+    url = f"{settings.downstream_security_url}/security/check/stream"
+
+    try:
+        async with client.stream(
+            "POST",
+            url,
+            json=imf.model_dump(),
+            headers={"Content-Type": "application/json"},
+            timeout=settings.downstream_timeout_seconds,
+        ) as response:
+            if response.status_code != 200:
+                raise DownstreamError(502)
+
+            async for line in response.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    yield json.loads(line)
+                except DownstreamError:
+                    raise
+                except Exception:
+                    raise DownstreamError(502)
+
+    except DownstreamError:
+        raise
+    except httpx.TimeoutException:
+        raise DownstreamError(502)
+    except httpx.ConnectError:
+        raise DownstreamError(502)
+    except httpx.RequestError:
+        raise DownstreamError(502)

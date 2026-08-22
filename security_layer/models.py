@@ -2,44 +2,52 @@
 models.py — Pydantic IMF models and audit event payloads for the
 Security & Governance Layer.
 
-Covers:
-- UUID4_RE compiled regex for UUID-v4 validation
-- Message, UserBlock, RequestBlock, GovernanceBlock, ResponseBlock
-- IMFRequest (the top-level Internal Message Format envelope)
-- PreAuditEventPayload and PostAuditEventPayload for Audit Store writes
+The leaf blocks that matched shared.imf's canonical shape closely enough
+to unify safely (Message, GovernanceBlock, ResponseBlock, RoutingBlock,
+CacheBlock) are now aliases of shared.imf's definitions — see that
+module's docstring for why those used to be a hand-maintained per-service
+copy and why that was risky.
+
+UserBlock/RequestBlock/the top-level document stay defined here: this
+service's UserBlock is fully optional (every field defaults to None),
+which doesn't match any other service's IMFUser closely enough to share,
+and RequestBlock requires a non-empty `messages` at parse time (min_length=1)
+— a deliberate strictness inference_adapter's own copy explicitly does NOT
+want (see inference_adapter/schemas/imf.py's docstring). Every class here
+sets extra="allow" so a field this file doesn't know about survives this
+service's parse/dump round trip unchanged (see shared.imf's docstring for
+why that matters).
+
+This module's own top-level document was confusingly named ``IMFRequest``
+— colliding with every *other* service's name for the nested *request*
+block — while what other services call the top-level ``IMFDocument`` lives
+here as ``IMFRequest``. That naming is preserved below purely for
+backward compatibility with existing call sites in this service; new code
+should prefer being explicit about which one it means.
+
+Also covers PreAuditEventPayload and PostAuditEventPayload for Audit Store
+writes — these are security_layer-specific, not part of the IMF envelope,
+and remain defined here.
 """
 
-import re
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from pydantic import BaseModel, Field, field_validator
-
-# ---------------------------------------------------------------------------
-# 4.1  UUID-v4 regex
-# ---------------------------------------------------------------------------
-
-UUID4_RE = re.compile(
-    r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
-    re.IGNORECASE,
-)
+from shared.imf import UUID4_RE  # noqa: F401 — re-exported for existing callers
+from shared.imf import IMFCache as CacheBlock
+from shared.imf import IMFGovernance as GovernanceBlock
+from shared.imf import IMFMessage as Message
+from shared.imf import IMFResponse as ResponseBlock
+from shared.imf import IMFRouting as RoutingBlock
 
 
 # ---------------------------------------------------------------------------
-# 4.2  Message
-# ---------------------------------------------------------------------------
-
-class Message(BaseModel):
-    """A single chat message with role and content."""
-
-    role: str
-    content: str
-
-
-# ---------------------------------------------------------------------------
-# 4.3  UserBlock
+# Blocks that keep their own definition (see module docstring for why)
 # ---------------------------------------------------------------------------
 
 class UserBlock(BaseModel):
     """Optional caller identity block carried inside the IMF."""
+
+    model_config = ConfigDict(extra="allow")
 
     user_id: str | None = None
     department: str | None = None
@@ -55,12 +63,10 @@ class UserBlock(BaseModel):
     rate_limit_override: int | None = None
 
 
-# ---------------------------------------------------------------------------
-# 4.4  RequestBlock
-# ---------------------------------------------------------------------------
-
 class RequestBlock(BaseModel):
     """The request payload block inside the IMF."""
+
+    model_config = ConfigDict(extra="allow")
 
     messages: list[Message] = Field(min_length=1)
     model: str | None = None
@@ -71,51 +77,8 @@ class RequestBlock(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# 4.5  GovernanceBlock
+# Top-level IMFRequest (== the whole envelope — see module docstring)
 # ---------------------------------------------------------------------------
-
-class GovernanceBlock(BaseModel):
-    """Governance enrichment block populated by the Security Layer."""
-
-    pii_masked: bool = False
-    pii_fields_detected: list[str] = Field(default_factory=list)
-    injection_score: float = 0.0
-    jailbreak_score: float = 0.0
-    content_safety_passed: bool = True
-    human_approval_required: bool = False
-    human_approval_status: str = "not_required"
-    policy_decisions: list[str] = Field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# 4.6  ResponseBlock
-# ---------------------------------------------------------------------------
-
-class ResponseBlock(BaseModel):
-    """The response payload block inside the IMF."""
-
-    content: str | None = None
-    finish_reason: str | None = None
-
-
-# ---------------------------------------------------------------------------
-# 4.7  IMFRequest
-# ---------------------------------------------------------------------------
-
-class RoutingBlock(BaseModel):
-    """Routing decision block — populated by the Router layer."""
-
-    selected_model: str | None = None
-    routing_mode: str = "auto"
-    fallback_level: int = 0
-
-
-class CacheBlock(BaseModel):
-    """Cache lookup/write state block."""
-
-    lookup_hit: bool = False
-    cache_key: str | None = None
-
 
 class IMFRequest(BaseModel):
     """Top-level Internal Message Format (IMF) envelope.
@@ -126,6 +89,8 @@ class IMFRequest(BaseModel):
     All fields align with the router's IMFRequest schema so the enriched
     IMF can be forwarded directly without transformation.
     """
+
+    model_config = ConfigDict(extra="allow")
 
     request_id: str
     trace_id: str | None = None
@@ -149,7 +114,7 @@ class IMFRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# 4.8  Audit event payloads
+# Audit event payloads (security_layer-specific — not part of the IMF envelope)
 # ---------------------------------------------------------------------------
 
 class PreAuditEventPayload(BaseModel):

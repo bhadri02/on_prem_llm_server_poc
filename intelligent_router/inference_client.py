@@ -15,7 +15,9 @@ Reasons:
   "connect_error"  — httpx.ConnectError raised (adapter unreachable)
 """
 
+import json
 import logging
+from typing import AsyncIterator
 
 import httpx
 
@@ -102,6 +104,77 @@ async def call_inference(
     except httpx.TimeoutException:
         raise InferenceError(
             f"Inference timeout after {timeout_seconds}s",
+            reason="timeout",
+        )
+    except httpx.ConnectError:
+        raise InferenceError(
+            "Inference adapter unreachable",
+            reason="connect_error",
+        )
+
+
+async def call_inference_stream(
+    imf: dict,
+    inference_url: str,
+    request_id: str,
+    timeout_seconds: float,
+    http_client: httpx.AsyncClient,
+) -> AsyncIterator[dict]:
+    """POST the full IMF to ``{inference_url}/infer/stream`` and yield each
+    parsed newline-delimited-JSON line (see inference_adapter's streaming
+    wire protocol — inference_adapter/routers/infer.py's module docstring).
+
+    Each yielded dict is one of:
+        {"type": "delta", "content": "<text>"}
+        {"type": "done", "imf": {...}}
+        {"type": "error", "event": "<code>", "status_code": <int>, ...}
+
+    The caller (pipeline.py's streaming pipeline) decides what to do with
+    an in-band "error" line — typically raising InferenceError itself to
+    trigger the same fallback path call_inference's non-streaming callers
+    use, if no content has been sent to the end client yet.
+
+    Raises:
+        InferenceError(reason="non_200")     -- /infer/stream itself
+                                                 returned non-200 (should not
+                                                 happen by design, but
+                                                 handled defensively)
+        InferenceError(reason="parse_error") -- a line isn't valid JSON
+        InferenceError(reason="timeout")     -- httpx.TimeoutException
+        InferenceError(reason="connect_error") -- httpx.ConnectError
+    """
+    try:
+        async with http_client.stream(
+            "POST",
+            f"{inference_url}/infer/stream",
+            json=imf,
+            headers={
+                "Content-Type": "application/json",
+                "X-Request-Id": request_id,
+            },
+            timeout=timeout_seconds,
+        ) as resp:
+            if resp.status_code != 200:
+                raise InferenceError(
+                    f"Inference stream returned HTTP {resp.status_code}",
+                    reason="non_200",
+                    status_code=resp.status_code,
+                )
+            async for line in resp.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    yield json.loads(line)
+                except InferenceError:
+                    raise
+                except Exception:
+                    raise InferenceError(
+                        "Inference stream line is not valid JSON",
+                        reason="parse_error",
+                    )
+    except httpx.TimeoutException:
+        raise InferenceError(
+            f"Inference stream timeout after {timeout_seconds}s",
             reason="timeout",
         )
     except httpx.ConnectError:

@@ -20,12 +20,12 @@ Error outcomes (with matching HTTP status codes):
 """
 
 from fastapi import APIRouter, BackgroundTasks, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from intelligent_router import metrics
 from intelligent_router.logging_config import get_logger
 from intelligent_router.models import IMFRequest
-from intelligent_router.pipeline import run_routing_pipeline
+from intelligent_router.pipeline import run_routing_pipeline, run_streaming_routing_pipeline
 
 logger = get_logger(__name__)
 
@@ -155,3 +155,21 @@ async def post_route(
         )
 
     return JSONResponse(status_code=result.status_code, content=error_body)
+
+
+@route_router.post("/route/stream")
+async def post_route_stream(
+    body: IMFRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> StreamingResponse:
+    """Streaming counterpart to POST /route — see pipeline.py's
+    run_streaming_routing_pipeline docstring for the wire protocol and
+    fallback-loop details. HTTP status is always 200; failures are
+    signaled in-band as the (typically only) "error" line.
+    """
+    imf: dict = body.model_dump()
+    return StreamingResponse(
+        run_streaming_routing_pipeline(imf, request.app.state, background_tasks),
+        media_type="application/x-ndjson",
+    )

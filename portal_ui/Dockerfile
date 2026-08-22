@@ -21,14 +21,17 @@ COPY portal_ui/ ./
 RUN npm run build
 
 # ── Stage 2: runtime (nginx) ──────────────────────────────────────────────────
-FROM nginx:alpine
+# Unprivileged variant: runs as a non-root user out of the box (no USER/chown
+# steps needed) and defaults to listening on 8080 instead of 80, since binding
+# port 80 requires root.
+FROM nginxinc/nginx-unprivileged:alpine
 
 # Remove the default nginx config
 RUN rm /etc/nginx/conf.d/default.conf
 
 # Minimal SPA-friendly nginx config with react-router fallback
 RUN printf 'server {\n\
-    listen 80;\n\
+    listen 8080;\n\
     server_name _;\n\
 \n\
     root /usr/share/nginx/html;\n\
@@ -42,9 +45,10 @@ RUN printf 'server {\n\
     location = /robots.txt  { log_not_found off; access_log off; }\n\
 }\n' > /etc/nginx/conf.d/default.conf
 
-# Copy built static assets from builder
-COPY --from=builder /app/dist /usr/share/nginx/html
+# Copy built static assets from builder (--chown matches this base image's
+# own nginx:root ownership convention for served content)
+COPY --from=builder --chown=nginx:root /app/dist /usr/share/nginx/html
 
-EXPOSE 80
+EXPOSE 8080
 
 CMD ["nginx", "-g", "daemon off;"]

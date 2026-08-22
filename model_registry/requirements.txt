@@ -12,5 +12,8 @@ pydantic-settings==2.6.1
 # Prometheus metrics exposition
 prometheus-client==0.21.1
 
+# Encryption at rest for stored provider API keys
+cryptography==43.0.3
+
 # Structured logging (shared observability module dependency)
 structlog==24.4.0

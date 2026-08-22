@@ -18,6 +18,14 @@ RUN pip install --no-cache-dir -r requirements.txt \
 COPY model_registry/ ./model_registry/
 COPY shared/         ./shared/
 
+# Non-root user. /data is where the models.json volume mounts — Docker
+# copies this directory's ownership into a named volume on first creation,
+# so appuser can write to it without a runtime chown step.
+RUN adduser --uid 1000 --disabled-password --gecos "" appuser \
+ && mkdir -p /data \
+ && chown -R appuser:appuser /app /data
+USER appuser
+
 EXPOSE 5000 9090
 
 ENV STORAGE_PATH=/data/models.json \

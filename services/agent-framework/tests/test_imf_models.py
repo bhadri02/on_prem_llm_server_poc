@@ -280,11 +280,16 @@ class TestIMFDocumentUUIDValidation:
         with pytest.raises(ValidationError):
             IMFDocument(**_minimal_doc(request_id=uuid_v3))
 
-    def test_uppercase_uuid_rejected(self):
-        """Uppercase UUID must be rejected (pattern requires lowercase)."""
+    def test_uppercase_uuid_accepted(self):
+        """Uppercase UUID is accepted — request_id validation is
+        case-insensitive platform-wide (shared.imf.UUID4_RE), matching
+        security_layer/intelligent_router's validators, which always
+        accepted uppercase. This service's own validator used to be
+        case-sensitive; that inconsistency is intentionally resolved in
+        favor of the more lenient, majority behavior."""
         upper = VALID_UUID_V4.upper()
-        with pytest.raises(ValidationError):
-            IMFDocument(**_minimal_doc(request_id=upper))
+        doc = IMFDocument(**_minimal_doc(request_id=upper))
+        assert doc.request_id == upper
 
     def test_empty_request_id_raises(self):
         with pytest.raises(ValidationError):

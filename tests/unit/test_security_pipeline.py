@@ -77,7 +77,7 @@ def _make_state(
     naturally.  We still inject via mock patches on the module to control
     outcomes precisely.
     """
-    settings = SimpleNamespace(pii_enabled=pii_enabled)
+    settings = SimpleNamespace(pii_enabled=pii_enabled, pii_entities_list=["EMAIL_ADDRESS", "PHONE_NUMBER", "PERSON"])
     state = SimpleNamespace(
         patterns=[],
         blocklist=[],

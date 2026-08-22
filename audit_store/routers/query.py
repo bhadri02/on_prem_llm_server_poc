@@ -5,29 +5,28 @@ Provides:
   GET /audit/requests/{request_id}  — fetch all events for a request (HTTP 200)
   GET /audit/events                 — filtered event listing with optional params
   GET /audit/summary                — aggregated counts by outcome and layer
+  GET /audit/governance/summary     — AI governance/security/usage summary
   GET /health                       — liveness / DB connectivity probe
 
 All endpoints:
   - Do NOT require X-API-Key authentication (Req 10.6).
-  - Access the shared SQLite connection via request.app.state.conn.
+  - Access the shared SQLAlchemy engine via request.app.state.engine.
   - Use get_logger(__name__) for structured JSON logging.
   - Validate ISO-8601 UTC time params via the shared _validate_time_range helper.
 """
 
-import concurrent.futures
-import json
-import sqlite3
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy import Row, func, select
 
+from audit_store.database import audit_events, get_db_executor, run_db
 from audit_store.logging_config import get_logger
 from audit_store.models import (
     AuditEventResponse,
     GovernanceSummaryResponse,
-    LayerEnum,
-    OutcomeEnum,
     SummaryResponse,
     TokenUsage,
     UUID4_RE,
@@ -48,8 +47,7 @@ def _parse_iso_utc(value: str) -> str:
     """Validate that *value* is an ISO-8601 datetime with a UTC suffix.
 
     Accepts a trailing ``Z`` or ``+00:00`` offset.  Returns the value
-    unchanged on success so callers can pass it directly into a SQLite
-    parameter tuple.
+    unchanged on success so callers can pass it directly into a query filter.
 
     Raises:
         ValueError: if the string lacks a UTC suffix or is not parseable.
@@ -116,53 +114,33 @@ def _validate_time_range(from_: str | None, to: str | None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Internal helper — row → AuditEventResponse
+# Internal helper — Row → AuditEventResponse
 # ---------------------------------------------------------------------------
 
-def _row_to_response(row: sqlite3.Row) -> AuditEventResponse:
-    """Convert a SQLite :class:`sqlite3.Row` into an :class:`AuditEventResponse`.
+def _row_to_response(row: Row) -> AuditEventResponse:
+    """Convert a SQLAlchemy Row into an :class:`AuditEventResponse`.
 
-    Deserialises the ``pii_actions`` and ``policy_decisions`` TEXT columns
-    back to native Python lists.  On JSON parse failure the raw string is
-    kept and a WARNING is logged (Req 3.5 / 7.3).
+    pii_actions/policy_decisions are native JSON columns, so they arrive
+    already deserialised as Python lists (``None`` for a never-written row,
+    normalised to ``[]``).
     """
-    audit_id = row["audit_id"]
-
-    def _parse_json_col(col_name: str) -> Any:
-        raw: str | None = row[col_name]
-        if raw is None:
-            return []
-        try:
-            return json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            logger.warning(
-                "json_deserialise_failed",
-                extra={
-                    "extra_fields": {
-                        "audit_id": audit_id,
-                        "column": col_name,
-                        "raw_value": raw,
-                    }
-                },
-            )
-            return raw  # return raw string per spec (Req 3.5)
-
+    m = row._mapping
     return AuditEventResponse(
-        audit_id=audit_id,
-        request_id=row["request_id"],
-        timestamp_utc=row["timestamp_utc"],
-        user_id=row["user_id"],
-        department=row["department"],
-        layer=row["layer"],
-        event_type=row["event_type"],
-        model_used=row["model_used"],
-        prompt_tokens=row["prompt_tokens"] or 0,
-        completion_tokens=row["completion_tokens"] or 0,
-        latency_ms=row["latency_ms"] or 0,
-        outcome=row["outcome"],
-        error_code=row["error_code"],
-        pii_actions=_parse_json_col("pii_actions"),
-        policy_decisions=_parse_json_col("policy_decisions"),
+        audit_id=m["audit_id"],
+        request_id=m["request_id"],
+        timestamp_utc=m["timestamp_utc"],
+        user_id=m["user_id"],
+        department=m["department"],
+        layer=m["layer"],
+        event_type=m["event_type"],
+        model_used=m["model_used"],
+        prompt_tokens=m["prompt_tokens"] or 0,
+        completion_tokens=m["completion_tokens"] or 0,
+        latency_ms=m["latency_ms"] or 0,
+        outcome=m["outcome"],
+        error_code=m["error_code"],
+        pii_actions=m["pii_actions"] or [],
+        policy_decisions=m["policy_decisions"] or [],
     )
 
 
@@ -189,14 +167,18 @@ async def get_events_by_request_id(request_id: str, request: Request):
             },
         )
 
-    conn: sqlite3.Connection = request.app.state.conn
-    cursor = conn.execute(
-        "SELECT * FROM audit_events "
-        "WHERE request_id = ? "
-        "ORDER BY timestamp_utc ASC, audit_id ASC",
-        (request_id,),
-    )
-    rows = cursor.fetchall()
+    engine = request.app.state.engine
+
+    def _query() -> list[Row]:
+        stmt = (
+            select(audit_events)
+            .where(audit_events.c.request_id == request_id)
+            .order_by(audit_events.c.timestamp_utc.asc(), audit_events.c.audit_id.asc())
+        )
+        with engine.connect() as conn:
+            return conn.execute(stmt).fetchall()
+
+    rows = await run_db(get_db_executor(request.app), _query)
     return [_row_to_response(r) for r in rows]
 
 
@@ -228,36 +210,25 @@ async def get_events(
     # Validate time range (raises 422 on failure)
     _validate_time_range(from_, to)
 
-    # Build parameterised WHERE clause dynamically
-    conditions: list[str] = []
-    params: list[Any] = []
-
+    conditions = []
     if user_id is not None:
-        conditions.append("user_id = ?")
-        params.append(user_id)
-
+        conditions.append(audit_events.c.user_id == user_id)
     if event_type is not None:
-        conditions.append("event_type = ?")
-        params.append(event_type)
-
+        conditions.append(audit_events.c.event_type == event_type)
     if from_ is not None:
-        conditions.append("timestamp_utc >= ?")
-        params.append(from_)
-
+        conditions.append(audit_events.c.timestamp_utc >= from_)
     if to is not None:
-        conditions.append("timestamp_utc <= ?")
-        params.append(to)
+        conditions.append(audit_events.c.timestamp_utc <= to)
 
-    where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    stmt = select(audit_events).where(*conditions).order_by(audit_events.c.timestamp_utc.desc()).limit(1000)
 
-    sql = (
-        f"SELECT * FROM audit_events {where_clause} "
-        "ORDER BY timestamp_utc DESC LIMIT 1000"
-    )
+    engine = request.app.state.engine
 
-    conn: sqlite3.Connection = request.app.state.conn
-    cursor = conn.execute(sql, params)
-    rows = cursor.fetchall()
+    def _query() -> list[Row]:
+        with engine.connect() as conn:
+            return conn.execute(stmt).fetchall()
+
+    rows = await run_db(get_db_executor(request.app), _query)
     return [_row_to_response(r) for r in rows]
 
 
@@ -275,43 +246,35 @@ async def get_summary(
 
     Satisfies: Req 5.1 – 5.7
     """
-    # Validate time range (raises 422 on failure)
     _validate_time_range(from_, to)
 
-    # Build shared WHERE clause
-    conditions: list[str] = []
-    params: list[Any] = []
-
+    conditions = []
     if from_ is not None:
-        conditions.append("timestamp_utc >= ?")
-        params.append(from_)
-
+        conditions.append(audit_events.c.timestamp_utc >= from_)
     if to is not None:
-        conditions.append("timestamp_utc <= ?")
-        params.append(to)
+        conditions.append(audit_events.c.timestamp_utc <= to)
 
-    where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    engine = request.app.state.engine
 
-    conn: sqlite3.Connection = request.app.state.conn
+    def _query() -> tuple[int, list, list]:
+        with engine.connect() as conn:
+            total = conn.execute(
+                select(func.count()).select_from(audit_events).where(*conditions)
+            ).scalar_one()
+            outcome_rows = conn.execute(
+                select(audit_events.c.outcome, func.count())
+                .where(*conditions)
+                .group_by(audit_events.c.outcome)
+            ).fetchall()
+            layer_rows = conn.execute(
+                select(audit_events.c.layer, func.count())
+                .where(*conditions)
+                .group_by(audit_events.c.layer)
+            ).fetchall()
+        return total, outcome_rows, layer_rows
 
-    # Total count
-    total_row = conn.execute(
-        f"SELECT COUNT(*) FROM audit_events {where_clause}", params
-    ).fetchone()
-    total_events: int = total_row[0]
-
-    # By outcome
-    outcome_rows = conn.execute(
-        f"SELECT outcome, COUNT(*) FROM audit_events {where_clause} GROUP BY outcome",
-        params,
-    ).fetchall()
+    total_events, outcome_rows, layer_rows = await run_db(get_db_executor(request.app), _query)
     by_outcome: dict[str, int] = {row[0]: row[1] for row in outcome_rows if row[0]}
-
-    # By layer
-    layer_rows = conn.execute(
-        f"SELECT layer, COUNT(*) FROM audit_events {where_clause} GROUP BY layer",
-        params,
-    ).fetchall()
     by_layer: dict[str, int] = {row[0]: row[1] for row in layer_rows if row[0]}
 
     return SummaryResponse(
@@ -356,63 +319,62 @@ async def get_governance_summary(
     """
     _validate_time_range(from_, to)
 
-    conditions: list[str] = []
-    params: list[Any] = []
+    conditions = []
     if from_ is not None:
-        conditions.append("timestamp_utc >= ?")
-        params.append(from_)
+        conditions.append(audit_events.c.timestamp_utc >= from_)
     if to is not None:
-        conditions.append("timestamp_utc <= ?")
-        params.append(to)
+        conditions.append(audit_events.c.timestamp_utc <= to)
 
-    where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    engine = request.app.state.engine
+    block_conditions = [*conditions, audit_events.c.outcome == "block"]
+    blocked_by_reason_col = func.coalesce(audit_events.c.error_code, audit_events.c.event_type)
 
-    conn: sqlite3.Connection = request.app.state.conn
+    def _query() -> tuple[int, list, list, list, list]:
+        with engine.connect() as conn:
+            total = conn.execute(
+                select(func.count()).select_from(audit_events).where(*conditions)
+            ).scalar_one()
+            outcome_rows = conn.execute(
+                select(audit_events.c.outcome, func.count())
+                .where(*conditions)
+                .group_by(audit_events.c.outcome)
+            ).fetchall()
+            layer_rows = conn.execute(
+                select(audit_events.c.layer, func.count())
+                .where(*conditions)
+                .group_by(audit_events.c.layer)
+            ).fetchall()
+            blocked_rows = conn.execute(
+                select(blocked_by_reason_col, func.count())
+                .where(*block_conditions)
+                .group_by(blocked_by_reason_col)
+            ).fetchall()
+            # Token totals, PII entity counts, and per-model usage all require
+            # per-row inspection (JSON column length, event_type+layer
+            # filtering) rather than a single GROUP BY — fetch once and fold
+            # in Python. POC audit-trail scale makes this cheap; revisit if
+            # the table grows large.
+            detail_rows = conn.execute(
+                select(
+                    audit_events.c.prompt_tokens,
+                    audit_events.c.completion_tokens,
+                    audit_events.c.pii_actions,
+                    audit_events.c.layer,
+                    audit_events.c.event_type,
+                    audit_events.c.model_used,
+                ).where(*conditions)
+            ).fetchall()
+        return total, outcome_rows, layer_rows, blocked_rows, detail_rows
 
-    total_events: int = conn.execute(
-        f"SELECT COUNT(*) FROM audit_events {where_clause}", params
-    ).fetchone()[0]
+    total_events, outcome_rows, layer_rows, blocked_rows, rows = await run_db(
+        get_db_executor(request.app), _query
+    )
 
-    by_outcome: dict[str, int] = {
-        row[0]: row[1]
-        for row in conn.execute(
-            f"SELECT outcome, COUNT(*) FROM audit_events {where_clause} GROUP BY outcome",
-            params,
-        ).fetchall()
-        if row[0]
-    }
-    by_layer: dict[str, int] = {
-        row[0]: row[1]
-        for row in conn.execute(
-            f"SELECT layer, COUNT(*) FROM audit_events {where_clause} GROUP BY layer",
-            params,
-        ).fetchall()
-        if row[0]
-    }
-
-    block_conditions = conditions + ["outcome = 'block'"]
-    block_where = "WHERE " + " AND ".join(block_conditions)
-    blocked_by_reason: dict[str, int] = {
-        row[0]: row[1]
-        for row in conn.execute(
-            f"SELECT COALESCE(error_code, event_type), COUNT(*) FROM audit_events "
-            f"{block_where} GROUP BY COALESCE(error_code, event_type)",
-            params,
-        ).fetchall()
-        if row[0]
-    }
+    by_outcome: dict[str, int] = {row[0]: row[1] for row in outcome_rows if row[0]}
+    by_layer: dict[str, int] = {row[0]: row[1] for row in layer_rows if row[0]}
+    blocked_by_reason: dict[str, int] = {row[0]: row[1] for row in blocked_rows if row[0]}
     requests_blocked_total = sum(blocked_by_reason.values())
     injection_flagged_total = blocked_by_reason.get("injection_detected", 0)
-
-    # Token totals, PII entity counts, and per-model usage all require
-    # per-row inspection (JSON column parsing / event_type+layer filtering)
-    # rather than a single GROUP BY — fetch once and fold in Python. POC
-    # audit-trail scale makes this cheap; revisit if the table grows large.
-    rows = conn.execute(
-        f"SELECT prompt_tokens, completion_tokens, pii_actions, layer, "
-        f"event_type, model_used FROM audit_events {where_clause}",
-        params,
-    ).fetchall()
 
     prompt_tokens_total = 0
     completion_tokens_total = 0
@@ -420,20 +382,16 @@ async def get_governance_summary(
     model_usage: dict[str, int] = {}
 
     for row in rows:
-        prompt_tokens_total += row["prompt_tokens"] or 0
-        completion_tokens_total += row["completion_tokens"] or 0
+        m = row._mapping
+        prompt_tokens_total += m["prompt_tokens"] or 0
+        completion_tokens_total += m["completion_tokens"] or 0
 
-        raw_pii = row["pii_actions"]
-        if raw_pii:
-            try:
-                parsed = json.loads(raw_pii)
-            except (json.JSONDecodeError, TypeError):
-                parsed = None
-            if isinstance(parsed, list):
-                pii_detections_total += len(parsed)
+        pii_actions = m["pii_actions"]
+        if isinstance(pii_actions, list):
+            pii_detections_total += len(pii_actions)
 
-        if row["layer"] == "router" and row["event_type"] in ("inference_complete", "cache_hit") and row["model_used"]:
-            model_usage[row["model_used"]] = model_usage.get(row["model_used"], 0) + 1
+        if m["layer"] == "router" and m["event_type"] in ("inference_complete", "cache_hit") and m["model_used"]:
+            model_usage[m["model_used"]] = model_usage.get(m["model_used"], 0) + 1
 
     return GovernanceSummaryResponse(
         total_events=total_events,
@@ -459,11 +417,6 @@ async def get_governance_summary(
 _HEALTH_TIMEOUT_S = 0.200  # 200 ms
 
 
-def _db_probe(conn: sqlite3.Connection) -> None:
-    """Execute SELECT 1 against the DB connection (run in a thread)."""
-    conn.execute("SELECT 1")
-
-
 @router.get("/health")
 async def health(request: Request):
     """Kubernetes liveness probe — checks DB connectivity with a 200 ms timeout.
@@ -473,13 +426,21 @@ async def health(request: Request):
         HTTP 503  ``{"status": "degraded", "db": "unreachable"}``  on failure
     Satisfies: Req 6.1, 6.2, 6.3, 6.4
     """
-    conn: sqlite3.Connection = request.app.state.conn
+    engine = request.app.state.engine
+
+    def _probe() -> None:
+        with engine.connect() as conn:
+            conn.execute(select(1))
 
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(_db_probe, conn)
-            future.result(timeout=_HEALTH_TIMEOUT_S)
-    except concurrent.futures.TimeoutError:
+        # Runs on the same dedicated single-worker executor as every other
+        # DB call (not a throwaway executor of its own) — a timeout here
+        # correctly reflects a saturated/blocked DB, not just an unreachable
+        # one.
+        await asyncio.wait_for(
+            run_db(get_db_executor(request.app), _probe), timeout=_HEALTH_TIMEOUT_S
+        )
+    except asyncio.TimeoutError:
         logger.warning("health_check_timeout", extra={"extra_fields": {"db": "unreachable"}})
         return JSONResponse(
             status_code=503,

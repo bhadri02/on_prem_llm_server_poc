@@ -78,23 +78,9 @@ export async function getMe(): Promise<Identity> {
 }
 
 // ---------------------------------------------------------------------------
-// Playground
+// Playground — streaming function defined further below, alongside
+// streamChatCompletion (both share the streamSSE helper).
 // ---------------------------------------------------------------------------
-
-/**
- * POST /portal/playground/chat
- *
- * Returns the raw upstream API Gateway response (any JSON shape).
- * Callers should extract `request_id` and the response content themselves.
- */
-export async function postChat(req: ChatReq): Promise<unknown> {
-  const res = await fetch("/portal/playground/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-  });
-  return handleResponse<unknown>(res);
-}
 
 // ---------------------------------------------------------------------------
 // Audit
@@ -267,6 +253,134 @@ export async function postChatCompletion(req: ChatReq): Promise<unknown> {
     body: JSON.stringify(req),
   });
   return handleResponse<unknown>(res);
+}
+
+export interface ChatStreamHandlers {
+  /** Called for each non-empty text delta, in arrival order. */
+  onDelta: (content: string) => void;
+  /** Called once when the stream ends successfully (finish_reason from the final chunk). */
+  onDone: (finishReason: string) => void;
+  /** Called at most once — either a transport failure or an in-band `{"error": ...}` frame. */
+  onError: (message: string) => void;
+  /** Called once, as soon as the request_id is known (parsed from the first chunk's
+   *  `id` field, "chatcmpl-{request_id}") — optional, only Playground needs it today. */
+  onId?: (requestId: string) => void;
+}
+
+/**
+ * Shared SSE-consumption loop behind streamChatCompletion/streamPlaygroundChat
+ * below. Both endpoints emit byte-identical OpenAI-compatible SSE (see
+ * api_gateway/routers/chat.py's sse_relay(), relayed byte-for-byte by
+ * admin_portal's sse_relay_with_inband_error) — only the URL differs. Every
+ * "chat.completion.chunk" event before the last carries a text delta; the
+ * final one carries the real finish_reason and no content; `data: [DONE]`
+ * terminates the stream. Errors are signalled in-band as
+ * `data: {"error": {...}}\n\n` followed by `[DONE]` — the HTTP status is
+ * always 200 once streaming has started, so they can't be distinguished via
+ * res.ok.
+ *
+ * Returns an abort function the caller can invoke (e.g. on unmount) to stop
+ * reading and cancel the underlying fetch.
+ */
+function streamSSE(url: string, req: ChatReq, handlers: ChatStreamHandlers): () => void {
+  const controller = new AbortController();
+  let idEmitted = false;
+
+  (async () => {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...req, stream: true }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      handlers.onError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+
+    if (!res.ok || !res.body) {
+      handlers.onError(await readErrorMessage(res));
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let sepIndex: number;
+        while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
+          const rawEvent = buffer.slice(0, sepIndex);
+          buffer = buffer.slice(sepIndex + 2);
+
+          const dataLine = rawEvent.split("\n").find((line) => line.startsWith("data:"));
+          if (!dataLine) continue;
+          const data = dataLine.slice(5).trim();
+          if (data === "[DONE]") return;
+
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(data);
+          } catch {
+            continue;
+          }
+          const obj = parsed as Record<string, unknown>;
+
+          if ("error" in obj) {
+            const errorObj = obj["error"] as Record<string, unknown> | undefined;
+            const message = typeof errorObj?.["message"] === "string" ? (errorObj["message"] as string) : "Stream error";
+            handlers.onError(message);
+            return;
+          }
+
+          if (!idEmitted && handlers.onId) {
+            const id = obj["id"];
+            if (typeof id === "string" && id.startsWith("chatcmpl-")) {
+              idEmitted = true;
+              handlers.onId(id.slice("chatcmpl-".length));
+            }
+          }
+
+          const choices = obj["choices"];
+          if (Array.isArray(choices) && choices.length > 0) {
+            const choice = choices[0] as Record<string, unknown>;
+            const delta = choice["delta"] as Record<string, unknown> | undefined;
+            const content = delta?.["content"];
+            if (typeof content === "string" && content.length > 0) {
+              handlers.onDelta(content);
+            }
+            const finishReason = choice["finish_reason"];
+            if (typeof finishReason === "string") {
+              handlers.onDone(finishReason);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      handlers.onError(err instanceof Error ? err.message : String(err));
+    }
+  })();
+
+  return () => controller.abort();
+}
+
+/** POST /portal/chat/completions with stream: true — see streamSSE for the wire format. */
+export function streamChatCompletion(req: ChatReq, handlers: ChatStreamHandlers): () => void {
+  return streamSSE("/portal/chat/completions", req, handlers);
+}
+
+/** POST /portal/playground/chat with stream: true — see streamSSE for the wire format. */
+export function streamPlaygroundChat(req: ChatReq, handlers: ChatStreamHandlers): () => void {
+  return streamSSE("/portal/playground/chat", req, handlers);
 }
 
 // ---------------------------------------------------------------------------

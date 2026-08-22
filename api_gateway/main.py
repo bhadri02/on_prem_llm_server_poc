@@ -17,6 +17,7 @@ Validates: Requirements 1.4, 1.7, 2.1, 8.5, 10.1
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import traceback as tb_module
@@ -39,6 +40,7 @@ from api_gateway.routers.chat import router as chat_router
 from api_gateway.routers.chat import validation_exception_handler
 from api_gateway.routers.health import router as health_router
 from api_gateway.routers.models import router as models_router
+from api_gateway.services.audit_client import flush_pending_audit_events
 
 # ---------------------------------------------------------------------------
 # Startup validation — fail fast if required configuration is missing.
@@ -67,7 +69,7 @@ except Exception as exc:
 # This configures structlog globally for the api_gateway service, reading
 # the LOG_LEVEL from settings (which in turn reads the LOG_LEVEL env var).
 # ---------------------------------------------------------------------------
-from shared.observability.logging import configure_structlog
+from shared.observability.logging import configure_structlog, emit, get_logger
 
 configure_structlog("api_gateway", settings.log_level)
 
@@ -89,6 +91,19 @@ if settings.tracing_enabled:
 # ---------------------------------------------------------------------------
 
 
+async def _audit_flush_loop(app: FastAPI) -> None:
+    """Background loop: periodically retries audit events that exhausted
+    post_audit_event's own retries (see services/audit_client.py's
+    _pending queue). Never crashes the service on failure."""
+    logger = get_logger("audit-flush")
+    while True:
+        await asyncio.sleep(settings.audit_flush_interval_seconds)
+        try:
+            await flush_pending_audit_events(app.state.http_client)
+        except Exception as exc:  # noqa: BLE001 — never let this loop die
+            emit(logger, level="ERROR", event="audit_flush_loop_failed", message=str(exc))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Create and tear down the shared HTTP and Redis clients.
@@ -102,9 +117,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     app.state.http_client = httpx.AsyncClient()
     app.state.redis = aioredis.from_url(settings.redis_url, decode_responses=False)
+    flush_task = asyncio.create_task(_audit_flush_loop(app))
     try:
         yield
     finally:
+        flush_task.cancel()
+        try:
+            await flush_task
+        except asyncio.CancelledError:
+            pass
         await app.state.http_client.aclose()
         await app.state.redis.aclose()
 

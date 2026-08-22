@@ -19,6 +19,11 @@ COPY api_gateway/ ./api_gateway/
 # Copy shared observability package (imported as shared.observability)
 COPY shared/ ./shared/
 
+# Non-root user
+RUN adduser --uid 1000 --disabled-password --gecos "" appuser \
+ && chown -R appuser:appuser /app
+USER appuser
+
 EXPOSE 8080 9090
 
 # api_gateway mounts Prometheus at /metrics on port 8080 — no separate metrics process.

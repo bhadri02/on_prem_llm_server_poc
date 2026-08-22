@@ -26,6 +26,15 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 COPY cache_service/ ./cache_service/
 COPY shared/        ./shared/
 
+# Non-root user — the pre-downloaded embedding model lives under /root/.cache
+# by default, so give appuser its own writable HF cache dir instead.
+RUN adduser --uid 1000 --disabled-password --gecos "" appuser \
+ && mkdir -p /home/appuser/.cache \
+ && cp -r /root/.cache/huggingface /home/appuser/.cache/huggingface \
+ && chown -R appuser:appuser /app /home/appuser
+ENV HF_HOME=/home/appuser/.cache/huggingface
+USER appuser
+
 EXPOSE 8086 9090
 
 ENV PORT=8086 \

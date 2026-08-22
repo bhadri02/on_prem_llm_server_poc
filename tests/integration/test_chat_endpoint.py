@@ -310,19 +310,29 @@ def test_malformed_authorization_header_without_bearer_prefix_returns_401(test_c
 # ---------------------------------------------------------------------------
 
 
-def test_streaming_returns_single_sse_chunk_then_done(test_client):
-    """POST /v1/chat/completions (stream=true) uses the same
-    forward_to_security() call as the non-streaming path (nothing
-    downstream produces incremental tokens), then frames the one
-    completed response as a single ``chat.completion.chunk`` SSE event
-    followed by ``data: [DONE]``.
+def test_streaming_relays_deltas_then_final_chunk_then_done(test_client):
+    """POST /v1/chat/completions (stream=true) relays real token-by-token
+    deltas from forward_to_security_stream as they arrive, then a final
+    chunk carrying the real selected_model/finish_reason once the "done"
+    event arrives, then ``data: [DONE]``.
 
     Validates: Requirements 5.1, 7.4, 9.5
     """
-    mock_imf = _make_imf_document(content="Hello from the model")
+
+    async def _fake_stream(imf, client):
+        yield {"type": "delta", "content": "Hello"}
+        yield {"type": "delta", "content": " there"}
+        yield {
+            "type": "done",
+            "imf": {
+                "routing": {"selected_model": "llama3"},
+                "response": {"finish_reason": "stop"},
+            },
+        }
+
     with patch(
-        "api_gateway.routers.chat.forward_to_security",
-        new=AsyncMock(return_value=mock_imf),
+        "api_gateway.routers.chat.forward_to_security_stream",
+        new=_fake_stream,
     ):
         response = test_client.post(
             "/v1/chat/completions",
@@ -349,13 +359,57 @@ def test_streaming_returns_single_sse_chunk_then_done(test_client):
         for line in body_text.split("\n\n")
         if line.startswith("data: ") and line[len("data: "):] != "[DONE]"
     ]
-    assert len(data_lines) == 1, f"Expected exactly one data event, got: {data_lines!r}"
+    assert len(data_lines) == 3, f"Expected two delta chunks + one final chunk, got: {data_lines!r}"
 
-    chunk = json.loads(data_lines[0])
-    assert chunk["object"] == "chat.completion.chunk"
-    assert chunk["choices"][0]["delta"]["content"] == "Hello from the model"
-    assert chunk["choices"][0]["delta"]["role"] == "assistant"
-    assert chunk["choices"][0]["finish_reason"] == "stop"
+    chunks = [json.loads(line) for line in data_lines]
+
+    assert chunks[0]["object"] == "chat.completion.chunk"
+    assert chunks[0]["choices"][0]["delta"]["content"] == "Hello"
+    assert chunks[0]["choices"][0]["delta"]["role"] == "assistant"
+    assert chunks[0]["choices"][0]["finish_reason"] is None
+
+    assert chunks[1]["choices"][0]["delta"]["content"] == " there"
+    assert chunks[1]["choices"][0]["finish_reason"] is None
+
+    # Final chunk: empty content, real selected_model, real finish_reason.
+    assert chunks[2]["model"] == "llama3"
+    assert chunks[2]["choices"][0]["delta"]["content"] == ""
+    assert chunks[2]["choices"][0]["finish_reason"] == "stop"
+
+
+def test_streaming_relays_in_band_error(test_client):
+    """An in-band {"type": "error", ...} chunk from forward_to_security_stream
+    is surfaced as an SSE error event, and the stream still terminates with
+    data: [DONE]."""
+
+    async def _fake_stream(imf, client):
+        yield {"type": "delta", "content": "Partial"}
+        yield {"type": "error", "event": "policy_denied", "status_code": 403}
+
+    with patch(
+        "api_gateway.routers.chat.forward_to_security_stream",
+        new=_fake_stream,
+    ):
+        response = test_client.post(
+            "/v1/chat/completions",
+            json={**VALID_REQUEST_BODY, "stream": True},
+            headers=VALID_HEADERS,
+        )
+
+    assert response.status_code == 200
+    body_text = response.text
+    assert body_text.endswith("data: [DONE]\n\n")
+
+    data_lines = [
+        line[len("data: "):]
+        for line in body_text.split("\n\n")
+        if line.startswith("data: ") and line[len("data: "):] != "[DONE]"
+    ]
+    chunks = [json.loads(line) for line in data_lines]
+
+    assert chunks[0]["choices"][0]["delta"]["content"] == "Partial"
+    assert chunks[1]["error"]["code"] == "403"
+    assert chunks[1]["error"]["message"] == "policy_denied"
 
 
 # ---------------------------------------------------------------------------

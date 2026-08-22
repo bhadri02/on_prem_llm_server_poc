@@ -6,12 +6,22 @@ backed by an atomic write strategy (write to .tmp then os.replace) against
 a JSON file on the PersistentVolume (STORAGE_PATH). Provides load(), get_all(),
 get_by_name(), get_by_task(), add(), update_status(), storage_reachable(),
 and the private _persist() atomic write helper.
+
+If an encryption_key is supplied, each record's api_key is encrypted
+(Fernet) before it hits disk and decrypted back to plaintext as soon as it's
+loaded into memory — in-memory ModelRecord.api_key is always plaintext, only
+the on-disk JSON is ever encrypted. A value that fails to decrypt (e.g. it
+was written before encryption was turned on) is treated as legacy plaintext
+and gets re-encrypted on the next persist, so enabling encryption on an
+existing models.json requires no manual migration step.
 """
 
 import json
 import os
 import sys
 from datetime import datetime
+
+from cryptography.fernet import Fernet, InvalidToken
 
 from model_registry.exceptions import DuplicateNameError, ModelNotFoundError, PersistenceError
 from model_registry.schemas.model import ModelRecord, ModelStatus, TaskType
@@ -26,17 +36,20 @@ class JsonFileManager:
     disk atomically via a .tmp file + os.replace rename.
     """
 
-    def __init__(self, storage_path: str) -> None:
+    def __init__(self, storage_path: str, encryption_key: str | None = None) -> None:
         """
         Initialise the manager with a path to the backing JSON file.
 
         Args:
             storage_path: Absolute or relative path to models.json on the
                           PersistentVolume (value of STORAGE_PATH env var).
+            encryption_key: Optional Fernet key (value of REGISTRY_ENCRYPTION_KEY).
+                          When provided, api_key fields are encrypted at rest.
         """
         self._storage_path: str = storage_path
         self._records: dict[str, ModelRecord] = {}
         self._storage_ok: bool = False
+        self._fernet: Fernet | None = Fernet(encryption_key.encode()) if encryption_key else None
 
     # ------------------------------------------------------------------
     # Startup
@@ -80,6 +93,8 @@ class JsonFileManager:
             data = json.loads(raw)
             records: dict[str, ModelRecord] = {}
             for item in data:
+                if item.get("api_key"):
+                    item = {**item, "api_key": self._decrypt_value(item["api_key"])}
                 record = ModelRecord.model_validate(item)
                 records[record.name] = record
             self._records = records
@@ -304,6 +319,9 @@ class JsonFileManager:
             PersistenceError: If writing or renaming the temp file fails.
         """
         records_list = [r.model_dump(mode="json") for r in self._records.values()]
+        for item in records_list:
+            if item.get("api_key"):
+                item["api_key"] = self._encrypt_value(item["api_key"])
         json_bytes = json.dumps(records_list, indent=2, ensure_ascii=False).encode(
             "utf-8"
         )
@@ -329,6 +347,28 @@ class JsonFileManager:
                 message=str(exc),
                 model_name=None,
             ) from exc
+
+    def _encrypt_value(self, value: str) -> str:
+        """Encrypt a plaintext value for storage; no-op if encryption is off."""
+        if not self._fernet:
+            return value
+        return self._fernet.encrypt(value.encode("utf-8")).decode("ascii")
+
+    def _decrypt_value(self, value: str) -> str:
+        """
+        Decrypt a stored value back to plaintext.
+
+        If encryption is off, or the value isn't a valid Fernet token (e.g.
+        it was written before REGISTRY_ENCRYPTION_KEY was configured), the
+        value is returned unchanged — it gets re-encrypted on the next
+        successful _persist() call, so no manual migration is needed.
+        """
+        if not self._fernet:
+            return value
+        try:
+            return self._fernet.decrypt(value.encode("ascii")).decode("utf-8")
+        except (InvalidToken, ValueError):
+            return value
 
     def _log_error(self, event: str, message: str) -> None:
         """

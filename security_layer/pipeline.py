@@ -134,6 +134,7 @@ async def run_pre_pipeline(imf: dict, state) -> PipelineResult:
         state.analyzer,
         state.anonymizer,
         state.settings.pii_enabled,
+        entities=state.settings.pii_entities_list,
     )
     imf["request"]["messages"] = masked_messages
     imf["governance"]["pii_masked"] = len(entities) > 0
@@ -206,6 +207,7 @@ async def run_post_pipeline(imf: dict, state) -> tuple[dict, list[str]]:
         state.analyzer,
         state.anonymizer,
         state.settings.pii_enabled,
+        entities=state.settings.pii_entities_list,
     )
     imf["response"]["content"] = masked_content
     if entities:

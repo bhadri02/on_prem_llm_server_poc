@@ -6,6 +6,9 @@ the response back to the caller.  Three typed exceptions signal the distinct
 failure modes callers need to handle separately.
 """
 
+import json
+from typing import AsyncIterator
+
 import httpx
 
 from security_layer.logging_config import get_logger
@@ -130,6 +133,75 @@ async def forward_to_router(
             },
         )
         return resp.status_code, resp.json()
+
+    except RouterInvalidResponseError:
+        raise
+    except httpx.TimeoutException:
+        raise RouterTimeoutError(request_id)
+    except httpx.ConnectError:
+        raise RouterUnavailableError(request_id)
+
+
+async def forward_to_router_stream(
+    imf: dict,
+    router_url: str,
+    request_id: str,
+    http_client: httpx.AsyncClient,
+    timeout_seconds: float | None = None,
+) -> AsyncIterator[dict]:
+    """Streaming counterpart to forward_to_router — POSTs to
+    ``{router_url}/route/stream`` and yields each parsed newline-delimited-
+    JSON line unchanged (see intelligent_router's streaming wire protocol —
+    pipeline.py's run_streaming_routing_pipeline docstring):
+
+        {"type": "delta", "content": "<text>"}
+        {"type": "done", "imf": {...}}
+        {"type": "error", "event": "<code>", "status_code": <int>, ...}
+
+    The caller (pre_check.py's streaming endpoint) is responsible for
+    chunk-level PII re-masking of "delta" content before relaying it
+    further — this function only relays the Router's stream unchanged.
+
+    Args:
+        imf:             The governance-enriched IMF dict to forward.
+        router_url:      Base URL of the Intelligent Router.
+        request_id:      UUID-v4 of the original request (X-Request-Id header).
+        http_client:     Shared httpx.AsyncClient; caller manages its lifecycle
+                         (unlike forward_to_router, which opens its own).
+        timeout_seconds: Read/write timeout budget. Defaults to
+                         _DEFAULT_READ_TIMEOUT_SECONDS if omitted.
+
+    Raises:
+        RouterTimeoutError:     On httpx.TimeoutException.
+        RouterUnavailableError: On httpx.ConnectError.
+        RouterInvalidResponseError: If the Router returns non-200, or a
+                                    stream line isn't valid JSON.
+    """
+    timeout = _build_timeout(timeout_seconds if timeout_seconds is not None else _DEFAULT_READ_TIMEOUT_SECONDS)
+    try:
+        async with http_client.stream(
+            "POST",
+            f"{router_url}/route/stream",
+            json=imf,
+            headers={"X-Request-Id": request_id},
+            timeout=timeout,
+        ) as resp:
+            if resp.status_code >= 300:
+                logger.warning(
+                    "router_non_2xx",
+                    extra={"extra_fields": {"request_id": request_id, "status_code": resp.status_code}},
+                )
+                raise RouterInvalidResponseError(request_id)
+
+            async for line in resp.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    yield json.loads(line)
+                except RouterInvalidResponseError:
+                    raise
+                except Exception:
+                    raise RouterInvalidResponseError(request_id)
 
     except RouterInvalidResponseError:
         raise

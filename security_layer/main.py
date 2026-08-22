@@ -5,15 +5,19 @@ Responsible for:
 - Startup validation of required environment variables
 - Loading and compiling injection patterns
 - Initialising Presidio PII engines (if PII_ENABLED)
+- Creating a shared httpx.AsyncClient (app.state.http_client — used by the
+  streaming pre-check path's forward_to_router_stream)
 - Storing all startup state on ``app.state``
 - Wiring the three routers (pre-check, post-check, health)
 - Custom exception handler for ``RequestValidationError``
 - ``create_app()`` factory used by tests and the uvicorn entrypoint
 """
 
+import asyncio
 import sys
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -21,6 +25,7 @@ from prometheus_client import make_asgi_app
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
 
+from security_layer.audit_client import flush_pending_audit_events
 from security_layer.config import settings
 from security_layer.content_safety import BLOCKLIST
 from security_layer.injection import load_injection_patterns
@@ -47,6 +52,18 @@ if settings.tracing_enabled:
 logger = get_logger(__name__)
 
 
+async def _audit_flush_loop() -> None:
+    """Background loop: periodically retries audit events that exhausted
+    post_audit_event's own retries (see audit_client.py's _pending queue).
+    Never crashes the service on failure."""
+    while True:
+        await asyncio.sleep(settings.audit_flush_interval_seconds)
+        try:
+            await flush_pending_audit_events()
+        except Exception as exc:  # noqa: BLE001 — never let this loop die
+            logger.error("audit_flush_loop_failed", extra={"extra_fields": {"error": str(exc)}})
+
+
 # ---------------------------------------------------------------------------
 # 18.1  Lifespan async context manager
 # ---------------------------------------------------------------------------
@@ -60,7 +77,8 @@ async def lifespan(app: FastAPI):
         2. Load and compile injection patterns from the configured YAML file.
         3. Initialise Presidio ``AnalyzerEngine`` / ``AnonymizerEngine`` when
            ``PII_ENABLED=true``; set both to ``None`` when disabled.
-        4. Store all state on ``app.state`` and log the startup confirmation.
+        4. Create a shared ``httpx.AsyncClient``.
+        5. Store all state on ``app.state`` and log the startup confirmation.
 
     Yields control to the ASGI framework once startup is complete.  On
     shutdown, logs "Security Layer stopped".
@@ -124,13 +142,24 @@ async def lifespan(app: FastAPI):
             sys.exit(1)
 
     # ------------------------------------------------------------------
-    # Step 4 — Store all state on app.state and log startup confirmation
+    # Step 4 — Create a shared httpx client (used by the streaming
+    # pre-check path's forward_to_router_stream, which — unlike the
+    # non-streaming forward_to_router — takes a caller-managed client
+    # rather than opening its own per call).
+    # ------------------------------------------------------------------
+    http_client = httpx.AsyncClient()
+
+    # ------------------------------------------------------------------
+    # Step 5 — Store all state on app.state and log startup confirmation
     # ------------------------------------------------------------------
     app.state.settings = settings
     app.state.patterns = patterns
     app.state.analyzer = analyzer
     app.state.anonymizer = anonymizer
     app.state.blocklist = BLOCKLIST
+    app.state.http_client = http_client
+
+    flush_task = asyncio.create_task(_audit_flush_loop())
 
     logger.info(
         "Security Layer started",
@@ -147,6 +176,12 @@ async def lifespan(app: FastAPI):
     # ------------------------------------------------------------------
     # Shutdown
     # ------------------------------------------------------------------
+    flush_task.cancel()
+    try:
+        await flush_task
+    except asyncio.CancelledError:
+        pass
+    await http_client.aclose()
     logger.info("Security Layer stopped")
 
 

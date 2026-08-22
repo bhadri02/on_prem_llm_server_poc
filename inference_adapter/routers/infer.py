@@ -37,16 +37,18 @@ Validates: Requirements 1.1, 1.6, 1.7, 1.8, 1.9, 1.10,
 from __future__ import annotations
 
 import json
+import math
 import sys
 import time
 from datetime import datetime, timezone
+from typing import AsyncIterator
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from inference_adapter.config import get_settings
 from inference_adapter.metrics import LAYER_METRICS
-from inference_adapter.schemas.imf import IMFDocument
+from inference_adapter.schemas.imf import IMFDocument, IMFResponse, IMFUsage
 from inference_adapter.services.imf_mapper import IMFMapper
 from inference_adapter.services.anthropic_client import (
     AnthropicBackendError,
@@ -69,6 +71,27 @@ from inference_adapter.services.ollama_client import (
 )
 
 infer_router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# Streaming wire protocol (internal, service-to-service — NOT the
+# browser-facing SSE format; api_gateway is the only hop that translates to
+# that). Newline-delimited JSON, one object per line:
+#
+#   {"type": "delta", "content": "<text>"}          — zero or more
+#   {"type": "done", "imf": {...full IMFDocument}}  — exactly one, last, on success
+#   {"type": "error", "event": "<code>", "status_code": <int>, ...}
+#                                                     — exactly one, in place
+#                                                       of "done", on failure
+#
+# HTTP status is always 200 for /infer/stream itself — failures are signaled
+# in-band via the "error" line so a partial stream (error after some deltas
+# already flushed) can still be represented; callers must inspect the first
+# line before assuming success.
+# ---------------------------------------------------------------------------
+
+
+def _ndjson(obj: dict) -> bytes:
+    return (json.dumps(obj) + "\n").encode()
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +265,278 @@ async def _dispatch_cloud_backend(
         status="success", department=department_label, model=model_label, latency_s=latency_ms / 1000.0
     )
     return JSONResponse(status_code=200, content=imf_out.model_dump())
+
+
+# ---------------------------------------------------------------------------
+# Streaming dispatch (routing.backend == "ollama")
+# ---------------------------------------------------------------------------
+
+
+async def _stream_ollama(
+    imf: IMFDocument,
+    request: Request,
+    request_id: str | None,
+    model_label: str,
+    department_label: str,
+) -> AsyncIterator[bytes]:
+    """Stream a chat completion from Ollama, relaying deltas as they arrive.
+
+    Mirrors the non-streaming Ollama dispatch block's error mapping (see
+    module docstring) but signals failures as an in-band "error" line
+    instead of an HTTP status code, since the response has already started
+    streaming with a 200 by the time most failures could occur.
+    """
+    settings = get_settings()
+    ollama_client = request.app.state.ollama_client
+    accumulated: list[str] = []
+    start_ns = time.monotonic_ns()
+
+    _log({"event": "inference_start", "request_id": request_id, "model": model_label,
+          "timestamp_utc": _utc_now_iso()})
+
+    try:
+        ollama_payload = IMFMapper.to_ollama_request(imf, settings)
+        async for chunk in ollama_client.chat_stream(ollama_payload):
+            message = chunk.get("message") or {}
+            piece = message.get("content") or ""
+            if piece:
+                accumulated.append(piece)
+                yield _ndjson({"type": "delta", "content": piece})
+
+            if chunk.get("done"):
+                finish_reason = IMFMapper.resolve_finish_reason(chunk.get("done_reason"))
+                prompt_tokens, completion_tokens, total_tokens = IMFMapper.resolve_token_counts(
+                    chunk.get("prompt_eval_count"), chunk.get("eval_count")
+                )
+                wall_clock_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+                total_duration = chunk.get("total_duration", 0)
+                inference_latency_ms = (
+                    math.floor(total_duration / 1_000_000) if total_duration > 0 else wall_clock_ms
+                )
+                imf_out = imf.model_copy(update={
+                    "response": IMFResponse(
+                        content="".join(accumulated),
+                        finish_reason=finish_reason,
+                        usage=IMFUsage(
+                            prompt_tokens=prompt_tokens,
+                            completion_tokens=completion_tokens,
+                            total_tokens=total_tokens,
+                        ),
+                    ),
+                    "metadata": {
+                        "inference_backend": "ollama",
+                        "inference_latency_ms": inference_latency_ms,
+                        "model_name": imf.routing.selected_model,
+                    },
+                    "extensions": {},
+                })
+                _log({"event": "inference_complete", "request_id": request_id, "model": model_label,
+                      "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+                      "total_tokens": total_tokens, "latency_ms": wall_clock_ms})
+                LAYER_METRICS.record_request(
+                    status="success", department=department_label, model=model_label,
+                    latency_s=wall_clock_ms / 1000.0,
+                )
+                yield _ndjson({"type": "done", "imf": imf_out.model_dump()})
+                return
+
+    except (OllamaTimeoutError, OllamaConnectionError):
+        event = "ollama_unreachable"
+        status_code = 503
+    except OllamaRequestError:
+        event = "ollama_request_rejected"
+        status_code = 422
+    except OllamaBackendError:
+        event = "ollama_backend_error"
+        status_code = 502
+    except OllamaInvalidResponseError:
+        event = "ollama_invalid_response"
+        status_code = 502
+    except Exception:
+        event = "internal_error"
+        status_code = 500
+    else:
+        # Stream ended without a "done" chunk — treat as an invalid response.
+        event = "ollama_invalid_response"
+        status_code = 502
+
+    latency_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+    _log({"event": "inference_error", "request_id": request_id, "model": model_label,
+          "error_code": event, "latency_ms": latency_ms})
+    LAYER_METRICS.record_error(error_code=event, department=department_label)
+    LAYER_METRICS.record_request(
+        status="error", department=department_label, model=model_label, latency_s=latency_ms / 1000.0
+    )
+    yield _ndjson({"type": "error", "event": event, "status_code": status_code, "request_id": request_id})
+
+
+# ---------------------------------------------------------------------------
+# Streaming dispatch (routing.backend == "anthropic")
+# ---------------------------------------------------------------------------
+
+
+async def _stream_anthropic(
+    imf: IMFDocument,
+    request: Request,
+    request_id: str | None,
+    model_label: str,
+    department_label: str,
+) -> AsyncIterator[bytes]:
+    """Stream a chat completion from Anthropic, relaying deltas as they arrive.
+
+    Mirrors _dispatch_cloud_backend's error mapping (see module docstring)
+    but signals failures as an in-band "error" line — see _stream_ollama's
+    docstring for why.
+    """
+    settings = get_settings()
+
+    try:
+        api_key = await resolve_api_key(model_label, settings, request.app.state.http_client)
+    except ModelSecretUnavailable:
+        yield _ndjson({"type": "error", "event": "model_registry_unreachable", "status_code": 503, "request_id": request_id})
+        return
+
+    if not api_key:
+        yield _ndjson({"type": "error", "event": "provider_api_key_not_configured", "status_code": 422,
+                       "model": model_label, "request_id": request_id})
+        return
+
+    _log({"event": "inference_start", "request_id": request_id, "model": model_label,
+          "backend": "anthropic", "timestamp_utc": _utc_now_iso()})
+
+    anthropic_client = request.app.state.anthropic_client
+    accumulated: list[str] = []
+    start_ns = time.monotonic_ns()
+
+    try:
+        anthropic_payload = IMFMapper.to_anthropic_request(imf, settings)
+        async for chunk in anthropic_client.messages_stream(anthropic_payload, api_key):
+            if chunk.get("type") == "content_delta":
+                text = chunk.get("text") or ""
+                if text:
+                    accumulated.append(text)
+                    yield _ndjson({"type": "delta", "content": text})
+            elif chunk.get("type") == "done":
+                wall_clock_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+                finish_reason = IMFMapper.resolve_anthropic_finish_reason(chunk.get("stop_reason"))
+                usage = chunk.get("usage") or {}
+                prompt_tokens = usage.get("input_tokens") or 0
+                completion_tokens = usage.get("output_tokens") or 0
+                imf_out = imf.model_copy(update={
+                    "response": IMFResponse(
+                        content="".join(accumulated),
+                        finish_reason=finish_reason,
+                        usage=IMFUsage(
+                            prompt_tokens=prompt_tokens,
+                            completion_tokens=completion_tokens,
+                            total_tokens=prompt_tokens + completion_tokens,
+                        ),
+                    ),
+                    "metadata": {
+                        "inference_backend": "anthropic",
+                        "inference_latency_ms": wall_clock_ms,
+                        "model_name": imf.routing.selected_model,
+                    },
+                    "extensions": {},
+                })
+                _log({"event": "inference_complete", "request_id": request_id, "model": model_label,
+                      "backend": "anthropic", "prompt_tokens": prompt_tokens,
+                      "completion_tokens": completion_tokens, "latency_ms": wall_clock_ms})
+                LAYER_METRICS.record_request(
+                    status="success", department=department_label, model=model_label,
+                    latency_s=wall_clock_ms / 1000.0,
+                )
+                yield _ndjson({"type": "done", "imf": imf_out.model_dump()})
+                return
+
+    except (AnthropicTimeoutError, AnthropicConnectionError):
+        event = "anthropic_unreachable"
+        status_code = 503
+    except AnthropicRequestError:
+        event = "anthropic_request_rejected"
+        status_code = 422
+    except AnthropicBackendError:
+        event = "anthropic_backend_error"
+        status_code = 502
+    except AnthropicInvalidResponseError:
+        event = "anthropic_invalid_response"
+        status_code = 502
+    except Exception:
+        event = "internal_error"
+        status_code = 500
+    else:
+        event = "anthropic_invalid_response"
+        status_code = 502
+
+    latency_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+    _log({"event": "inference_error", "request_id": request_id, "model": model_label,
+          "error_code": event, "latency_ms": latency_ms})
+    LAYER_METRICS.record_error(error_code=event, department=department_label)
+    LAYER_METRICS.record_request(
+        status="error", department=department_label, model=model_label, latency_s=latency_ms / 1000.0
+    )
+    yield _ndjson({"type": "error", "event": event, "status_code": status_code, "request_id": request_id})
+
+
+# ---------------------------------------------------------------------------
+# POST /infer/stream
+# ---------------------------------------------------------------------------
+
+
+@infer_router.post("/infer/stream")
+async def infer_stream(imf: IMFDocument, request: Request) -> StreamingResponse:
+    """Streaming counterpart to POST /infer — see module docstring's wire
+    protocol section. Runs the exact same pre-flight validation as /infer
+    (missing selected_model / empty messages / model not loaded) before
+    dispatching, emitting the same event codes as the first (and only)
+    line of the stream instead of as the HTTP status.
+    """
+    request_id: str | None = imf.request_id
+    model_label: str = imf.routing.selected_model or ""
+    department_label: str = imf.user.department or ""
+
+    async def _single_error(event: str, status_code: int, **extra) -> AsyncIterator[bytes]:
+        LAYER_METRICS.record_request(
+            status="error", department=department_label, model=model_label, latency_s=0.0
+        )
+        yield _ndjson({"type": "error", "event": event, "status_code": status_code,
+                       "request_id": request_id, **extra})
+
+    if not imf.routing.selected_model:
+        return StreamingResponse(
+            _single_error("missing_selected_model", 422), media_type="application/x-ndjson"
+        )
+
+    model_label = imf.routing.selected_model
+
+    if not imf.request.messages:
+        return StreamingResponse(
+            _single_error("empty_messages", 422), media_type="application/x-ndjson"
+        )
+
+    backend = (imf.routing.backend or "ollama").lower()
+    if backend != "ollama":
+        if backend != "anthropic":
+            return StreamingResponse(
+                _single_error("unsupported_backend", 422, backend=backend),
+                media_type="application/x-ndjson",
+            )
+        return StreamingResponse(
+            _stream_anthropic(imf, request, request_id, model_label, department_label),
+            media_type="application/x-ndjson",
+        )
+
+    ollama_models: list[str] = request.app.state.ollama_models
+    if imf.routing.selected_model not in ollama_models:
+        return StreamingResponse(
+            _single_error("model_not_loaded", 422, model=imf.routing.selected_model),
+            media_type="application/x-ndjson",
+        )
+
+    return StreamingResponse(
+        _stream_ollama(imf, request, request_id, model_label, department_label),
+        media_type="application/x-ndjson",
+    )
 
 
 # ---------------------------------------------------------------------------

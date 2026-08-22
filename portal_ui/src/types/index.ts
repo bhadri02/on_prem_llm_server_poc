@@ -10,6 +10,7 @@ export interface ChatReq {
   model: string;
   messages: Message[];
   temperature: number;
+  stream?: boolean;
 }
 
 /** Mirrors AuditEvent Pydantic schema (admin_portal/schemas/audit.py) */

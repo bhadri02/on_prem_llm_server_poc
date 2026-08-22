@@ -213,7 +213,6 @@ def configure_tracing(service: str, otel_endpoint: str) -> None:
 
         # ── W3C TraceContext propagator ───────────────────────────────────
         from opentelemetry.propagate import set_global_textmap
-        from opentelemetry.propagators.b3 import B3MultiFormat  # noqa: F401 — optional
         from opentelemetry.trace.propagation.tracecontext import (
             TraceContextTextMapPropagator,
         )

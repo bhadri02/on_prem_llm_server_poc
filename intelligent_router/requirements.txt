@@ -20,3 +20,12 @@ prometheus-client==0.21.1
 
 # Structured logging (shared observability module dependency)
 structlog==24.4.0
+
+# Distributed tracing (opt-in via TRACING_ENABLED — shared.observability.middleware
+# gracefully no-ops if these aren't installed, but they must be present for
+# TRACING_ENABLED=true to actually do anything)
+opentelemetry-api==1.27.0
+opentelemetry-sdk==1.27.0
+opentelemetry-exporter-otlp-proto-grpc==1.27.0
+opentelemetry-instrumentation-fastapi==0.48b0
+opentelemetry-instrumentation-httpx==0.48b0

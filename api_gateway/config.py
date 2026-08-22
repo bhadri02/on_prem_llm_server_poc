@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     audit_store_url: str = "http://audit-store:9200"
     # env: AUDIT_API_KEY — X-API-Key header value for the Audit Store
     audit_api_key: str = ""
+    # env: AUDIT_FLUSH_INTERVAL_SECONDS — how often to retry audit events
+    # that exhausted post_audit_event's own retries (see
+    # services/audit_client.py's _pending queue).
+    audit_flush_interval_seconds: int = 30
 
     # ── Identity resolution (Phase 2 — RBAC + per-user API keys) ────────────
     # env: ADMIN_PORTAL_URL — base URL of the Admin Portal API

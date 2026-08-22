@@ -21,7 +21,6 @@ import asyncio
 import json
 import re
 import uuid
-from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 
 # ---------------------------------------------------------------------------
@@ -35,8 +34,12 @@ from hypothesis.database import InMemoryExampleDatabase
 # ---------------------------------------------------------------------------
 # Register and load the 'ci' Hypothesis profile (max_examples=100).
 # Must be done before any @given-decorated functions are defined.
+# deadline=None: these properties assert correctness, not latency — see
+# test_write_properties.py's identical note (real DB round trips per
+# example are I/O-bound and can occasionally exceed the default 200ms
+# wall-clock deadline under load).
 # ---------------------------------------------------------------------------
-settings.register_profile("ci", max_examples=100, database=InMemoryExampleDatabase())
+settings.register_profile("ci", max_examples=100, deadline=None, database=InMemoryExampleDatabase())
 settings.load_profile("ci")
 
 # ---------------------------------------------------------------------------
@@ -48,8 +51,7 @@ from audit_store.models import (
     EventTypeEnum,
     OutcomeEnum,
 )
-from audit_store.database import init_schema, get_connection
-from audit_store.main import create_app
+from tests.audit_store_test_utils import make_audit_store_app
 
 # ---------------------------------------------------------------------------
 # Test constants
@@ -64,27 +66,9 @@ AUDIT_API_KEY = "test-key"
 def _make_app():
     """Build a fresh in-memory FastAPI app for one Hypothesis example.
 
-    Mirrors the helper in test_write_properties.py so each property-based
-    example starts with a completely clean database.
+    Returns (application, engine) — see tests/audit_store_test_utils.py.
     """
-
-    @asynccontextmanager
-    async def _noop_lifespan(application):
-        yield
-
-    application = create_app()
-    application.router.lifespan_context = _noop_lifespan
-
-    conn = get_connection(":memory:")
-    init_schema(conn)
-
-    class _TestSettings:
-        audit_api_key: str = AUDIT_API_KEY
-        db_path: str = ":memory:"
-
-    application.state.conn = conn
-    application.state.settings = _TestSettings()
-    return application, conn
+    return make_audit_store_app()
 
 
 def _make_client(application):
@@ -183,7 +167,7 @@ def test_request_lifecycle_trace_ordering(events):
             # Query back.
             resp = await client.get(f"/audit/requests/{request_id}")
 
-        conn.close()
+        conn.dispose()
         return resp
 
     resp = asyncio.run(_run())
@@ -251,7 +235,7 @@ def test_json_round_trip_pii_and_policy(pii_actions, policy_decisions):
 
             query_resp = await client.get(f"/audit/requests/{request_id}")
 
-        conn.close()
+        conn.dispose()
         return query_resp
 
     query_resp = asyncio.run(_run())
@@ -370,7 +354,7 @@ def test_filter_query_conjunctive_correctness(
 
             query_resp = await client.get("/audit/events", params=params)
 
-        conn.close()
+        conn.dispose()
         return query_resp, from_str, to_str
 
     query_resp, from_str, to_str = asyncio.run(_run())
@@ -433,7 +417,7 @@ def test_filter_query_ordering_and_limit(events):
             # Query with no filters.
             query_resp = await client.get("/audit/events")
 
-        conn.close()
+        conn.dispose()
         return query_resp
 
     query_resp = asyncio.run(_run())
@@ -487,7 +471,7 @@ def test_summary_totals_invariant(events):
             # Call summary with no time range.
             summary_resp = await client.get("/audit/summary")
 
-        conn.close()
+        conn.dispose()
         return summary_resp
 
     summary_resp = asyncio.run(_run())
@@ -543,7 +527,7 @@ def test_get_endpoints_no_auth_required(path):
         ) as client:
             resp = await client.get(path)
 
-        conn.close()
+        conn.dispose()
         return resp
 
     resp = asyncio.run(_run())

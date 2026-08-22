@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     # Login sessions (Phase 6 — real password login for both users and admins)
     SESSION_TTL_HOURS: int = 8
     SESSION_COOKIE_NAME: str = "portal_session"
+    # Marks the session cookie Secure (browser only sends it over HTTPS).
+    # Defaults to False so local/dev HTTP setups keep working out of the box —
+    # set SESSION_COOKIE_SECURE=true once a real TLS-terminating reverse
+    # proxy fronts this deployment. Leaving it false in an HTTP-only
+    # production deployment means the session cookie is sniffable/replayable
+    # on the wire; see docs/DEPLOYMENT.md.
+    SESSION_COOKIE_SECURE: bool = False
     # POC default password for the seeded admin user — only set if the row's
     # password_hash is still null (never overwrites a real admin-chosen one).
     SEED_ADMIN_PASSWORD: str = "admin123"

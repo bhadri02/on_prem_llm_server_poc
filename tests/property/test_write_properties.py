@@ -39,8 +39,14 @@ from hypothesis import given, settings, strategies as st
 # Register the 'ci' Hypothesis settings profile.
 # Must be done before any @given-decorated functions are defined so the
 # profile is available for load_profile() below.
+# deadline=None: these properties assert correctness, not latency — a
+# per-request DB round trip (real SQLAlchemy Core query compilation +
+# execution against sqlite, standing in for Postgres in production) is
+# I/O-bound and can occasionally exceed Hypothesis's default 200ms wall-
+# clock deadline under load, which would otherwise fail the test on pure
+# timing rather than a real correctness violation.
 # ---------------------------------------------------------------------------
-settings.register_profile("ci", max_examples=100)
+settings.register_profile("ci", max_examples=100, deadline=None)
 settings.load_profile("ci")
 
 # ---------------------------------------------------------------------------
@@ -53,8 +59,8 @@ from audit_store.models import (
     OutcomeEnum,
     AuditEventCreate,
 )
-from audit_store.database import init_schema, get_connection
-from audit_store.main import create_app
+from audit_store.database import audit_events
+from tests.audit_store_test_utils import make_audit_store_app
 
 # ---------------------------------------------------------------------------
 # Test constants (mirror conftest.py so this file can also run standalone)
@@ -69,26 +75,13 @@ AUDIT_API_KEY = "test-key"
 
 
 def _make_app():
-    """Build a fresh in-memory FastAPI app for one Hypothesis example."""
-    from contextlib import asynccontextmanager
+    """Build a fresh in-memory FastAPI app for one Hypothesis example.
 
-    @asynccontextmanager
-    async def _noop_lifespan(application):
-        yield
-
-    application = create_app()
-    application.router.lifespan_context = _noop_lifespan
-
-    conn = get_connection(":memory:")
-    init_schema(conn)
-
-    class _TestSettings:
-        audit_api_key: str = AUDIT_API_KEY
-        db_path: str = ":memory:"
-
-    application.state.conn = conn
-    application.state.settings = _TestSettings()
-    return application, conn
+    Returns (application, engine) — the second element is a SQLAlchemy
+    Engine (audit_store is Postgres-backed in production; tests use
+    sqlite:///:memory: — see tests/audit_store_test_utils.py).
+    """
+    return make_audit_store_app()
 
 
 @given(
@@ -122,7 +115,7 @@ def test_valid_single_write_returns_201(request_id, layer, event_type, outcome):
                 "outcome": outcome,
             }
             response = await client.post("/audit/events", json=payload)
-        conn.close()
+        conn.dispose()
         return response
 
     response = asyncio.run(_run())
@@ -178,7 +171,7 @@ def test_audit_id_auto_generation_is_uuid4(request_id, layer, event_type, outcom
                 "outcome": outcome,
             }
             response = await client.post("/audit/events", json=payload)
-        conn.close()
+        conn.dispose()
         return response
 
     response = asyncio.run(_run())
@@ -258,7 +251,7 @@ def test_invalid_request_id_returns_422(request_id, layer, event_type, outcome):
                 "outcome": outcome,
             }
             response = await client.post("/audit/events", json=payload)
-        conn.close()
+        conn.dispose()
         return response
 
     response = asyncio.run(_run())
@@ -317,7 +310,7 @@ def test_invalid_enum_field_returns_422(
             }
             payload[field_name] = invalid_value
             response = await client.post("/audit/events", json=payload)
-        conn.close()
+        conn.dispose()
         return response, field_name
 
     response, corrupted_field = asyncio.run(_run())
@@ -383,7 +376,7 @@ def test_non_json_body_returns_400(body):
                     "X-API-Key": AUDIT_API_KEY,
                 },
             )
-        conn.close()
+        conn.dispose()
         return response
 
     response = asyncio.run(_run())
@@ -428,7 +421,7 @@ def test_mutating_methods_rejected(method, path):
             headers={"X-API-Key": AUDIT_API_KEY},
         ) as client:
             response = await client.request(method=method, url=path)
-        conn.close()
+        conn.dispose()
         return response
 
     response = asyncio.run(_run())
@@ -495,9 +488,11 @@ def test_batch_atomicity_on_invalid_record(n, invalid_pos):
             )
 
         # Check DB directly — must be empty
-        row = conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()
-        db_count = row[0]
-        conn.close()
+        from sqlalchemy import func, select
+
+        with conn.connect() as db_conn:
+            db_count = db_conn.execute(select(func.count()).select_from(audit_events)).scalar_one()
+        conn.dispose()
         return response, db_count
 
     response, db_count = asyncio.run(_run())
@@ -554,7 +549,7 @@ def test_batch_size_over_limit(n):
                 "/audit/events/batch",
                 json={"events": events},
             )
-        conn.close()
+        conn.dispose()
         return response
 
     response = asyncio.run(_run())
@@ -607,7 +602,7 @@ def test_batch_size_valid(n):
                 "/audit/events/batch",
                 json={"events": events},
             )
-        conn.close()
+        conn.dispose()
         return response
 
     response = asyncio.run(_run())
@@ -668,11 +663,13 @@ def test_duplicate_audit_id_returns_409(request_id, audit_id):
             second_response = await client.post("/audit/events", json=payload)
 
         # Verify DB still has exactly 1 row for this audit_id
-        row = conn.execute(
-            "SELECT COUNT(*) FROM audit_events WHERE audit_id = ?", (audit_id,)
-        ).fetchone()
-        db_count = row[0]
-        conn.close()
+        from sqlalchemy import func, select
+
+        with conn.connect() as db_conn:
+            db_count = db_conn.execute(
+                select(func.count()).select_from(audit_events).where(audit_events.c.audit_id == audit_id)
+            ).scalar_one()
+        conn.dispose()
         return first_response, second_response, db_count
 
     first_response, second_response, db_count = asyncio.run(_run())
@@ -757,7 +754,7 @@ def test_writes_total_incremented_on_success(n, layer, event_type, outcome):
                 assert response.status_code == 201, (
                     f"Expected 201 but got {response.status_code}. Body: {response.text}"
                 )
-        conn.close()
+        conn.dispose()
 
     asyncio.run(_run())
 
@@ -825,7 +822,7 @@ def test_writes_total_not_incremented_on_failure(layer, event_type, outcome):
                 f"Expected 422 for invalid layer={layer!r}, "
                 f"got {response.status_code}. Body: {response.text}"
             )
-        conn.close()
+        conn.dispose()
 
     asyncio.run(_run())
 
@@ -910,7 +907,7 @@ def test_write_latency_records_every_attempt(is_valid, layer, event_type, outcom
                 "outcome": outcome if is_valid else "INVALID_OUTCOME",
             }
             response = await client.post("/audit/events", json=payload)
-        conn.close()
+        conn.dispose()
         return response
 
     response = asyncio.run(_run())
@@ -1002,7 +999,7 @@ def test_auth_enforcement_on_write_endpoints(path, wrong_key):
                 headers={"X-API-Key": wrong_key},
             )
 
-        conn.close()
+        conn.dispose()
         return no_key_response, wrong_key_response
 
     no_key_response, wrong_key_response = asyncio.run(_run())

@@ -1,120 +1,74 @@
 """
 Pydantic schemas for the Internal Message Format (IMF) as consumed by the Inference Adapter.
 
-Defines:
-  IMFMessage     — a single chat message with role and content
-  IMFUsage       — token usage statistics
-  IMFResponse    — the LLM response payload (content, finish_reason, usage)
-  IMFGovernance  — governance metadata including PII detection results and policy decisions
-  IMFRouting     — model routing decisions (selected_model may be absent on inbound requests)
-  IMFUser        — caller identity and department for Prometheus labels and PII handling
-  IMFRequest     — the inbound request fields (messages, task_type, model, stream, etc.)
-  IMFCache       — cache lookup state carried in the envelope
-  IMFDocument    — the full IMF envelope accepted on POST /infer
+The leaf blocks (IMFMessage, IMFUsage, IMFResponse, IMFGovernance,
+IMFRouting, IMFCache) are re-exported from shared.imf — see that module's
+docstring for why those used to be a hand-maintained per-service copy and
+why that was risky.
 
-All fields outside `response`, `metadata`, and `extensions` are preserved unchanged
-when the Inference Adapter returns the outbound IMF document.
+IMFUser/IMFRequest/IMFDocument stay defined here, all fields optional with
+sensible defaults, so that the Inference Adapter can provide structured
+422 errors for missing/invalid required fields (e.g. an explicit empty
+`request.messages`, or an absent `routing.selected_model`) rather than
+letting Pydantic raise its own differently-shaped validation error at
+parse time — this is load-bearing for tests/inference_adapter's structured
+error-event assertions, not incidental laxity. Every class here sets
+extra="allow" so a field this file doesn't know about survives this
+service's parse/dump round trip unchanged (see shared.imf's docstring for
+why that matters); IMFUser also backfills key_id/model_entitlements/
+rate_limit_override (previously missing here, present in other services'
+copies) so those fields survive this hop even though this service doesn't
+act on them itself.
+
+All fields outside `response`, `metadata`, and `extensions` are preserved
+unchanged when the Inference Adapter returns the outbound IMF document.
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-
-class IMFMessage(BaseModel):
-    """A single message in the conversation history."""
-
-    role: str
-    content: str
-
-
-class IMFUsage(BaseModel):
-    """Token usage counters populated from the Ollama response."""
-
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    total_tokens: int = 0
-
-
-class IMFResponse(BaseModel):
-    """The LLM-generated response block, populated by the Inference Adapter."""
-
-    content: str | None = None
-    finish_reason: str | None = None
-    usage: IMFUsage | None = None
-
-
-class IMFGovernance(BaseModel):
-    """
-    Governance metadata.
-
-    pii_fields_detected is the only field the Inference Adapter actively reads —
-    it drives the log PII-exclusion logic.  All other fields are optional and
-    are preserved unchanged in the outbound IMF envelope.
-    """
-
-    pii_fields_detected: list[str] = []
-    pii_masked: bool | None = None
-    injection_score: float | None = None
-    jailbreak_score: float | None = None
-    content_safety_passed: bool | None = None
-    human_approval_required: bool | None = None
-    human_approval_status: str | None = None
-    policy_decisions: list | None = None
-
-
-class IMFRouting(BaseModel):
-    """
-    Model routing decisions made by the Intelligent Router.
-
-    selected_model is optional here so that the Inference Adapter can detect
-    and reject requests where it is absent (Requirement 1.7).
-
-    backend is stamped by the Router from model_matrix.yaml's ModelEntry.backend
-    (see intelligent_router/pipeline.py Stage 3) — it tells the Inference
-    Adapter which client to dispatch through ("ollama" vs a cloud provider
-    like "anthropic") without a per-request Model Registry lookup for the
-    common (Ollama) case. Absent/None is treated as "ollama" for backward
-    compatibility with callers that don't set it.
-    """
-
-    selected_model: str | None = None
-    routing_mode: str | None = None
-    fallback_level: int = 0
-    backend: str | None = None
+from shared.imf import (  # noqa: F401
+    IMFCache,
+    IMFGovernance,
+    IMFMessage,
+    IMFResponse,
+    IMFRouting,
+    IMFUsage,
+)
 
 
 class IMFUser(BaseModel):
     """Caller identity carried in the IMF envelope."""
 
+    model_config = ConfigDict(extra="allow")
+
     user_id: str | None = None
     department: str | None = None
-    roles: list[str] = []
+    roles: list[str] = Field(default_factory=list)
     auth_method: str | None = None
+    key_id: str | None = None
+    model_entitlements: list[str] = Field(default_factory=list)
+    rate_limit_override: int | None = None
 
 
 class IMFRequest(BaseModel):
     """
     The consumer's inbound request fields carried inside the IMF envelope.
 
-    All fields are optional with sensible defaults so that the Inference Adapter
-    can provide structured 422 errors for missing required fields rather than
-    letting Pydantic raise a validation error at parse time.
+    All fields are optional with sensible defaults so that the Inference
+    Adapter can provide structured 422 errors for missing required fields
+    rather than letting Pydantic raise a validation error at parse time.
     """
+
+    model_config = ConfigDict(extra="allow")
 
     model: str | None = None
     task_type: str | None = None
-    messages: list[IMFMessage] = []
+    messages: list[IMFMessage] = Field(default_factory=list)
     stream: bool = False
     max_tokens: int | None = None
     temperature: float | None = None
-
-
-class IMFCache(BaseModel):
-    """Cache lookup state carried through the IMF envelope."""
-
-    lookup_hit: bool = False
-    cache_key: str | None = None
 
 
 class IMFDocument(BaseModel):
@@ -130,6 +84,8 @@ class IMFDocument(BaseModel):
     Fields the Inference Adapter writes: response, metadata, extensions.
     All other fields are preserved byte-identical in the outbound document.
     """
+
+    model_config = ConfigDict(extra="allow")
 
     request_id: str | None = None
     trace_id: str | None = None

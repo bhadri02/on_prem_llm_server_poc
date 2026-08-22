@@ -16,9 +16,26 @@ as a background task so the durable copy reaches the Audit Store too.
 
 Failure behaviour — mirrors the other services' audit_client exactly: every
 exception branch logs a WARNING and returns; the function never raises.
+
+Reliability: a bare fire-and-forget POST silently drops the event on any
+audit_store blip — since audit_store is also the source of truth for the
+governance/compliance summary, that's a real (if usually brief) data-loss
+window, not just a log-noise annoyance. post_audit_event now retries a
+couple of times with a short backoff before giving up, and if it still
+fails, hands the (already-translated) payload to a bounded in-process queue
+(_pending) that flush_pending_audit_events() (called on an interval from
+main.py's lifespan) keeps retrying. This is deliberately in-memory, not
+disk-spooled — it survives a brief audit_store outage while this process
+keeps running, but not a restart of this service itself; that's an accepted
+tradeoff to avoid adding a new persistent volume just for this. If the
+queue itself fills up (audit_store down for a long time), the oldest
+pending events are dropped to bound memory use, logged once per drop.
 """
 
 from __future__ import annotations
+
+import asyncio
+from collections import deque
 
 import httpx
 from fastapi import BackgroundTasks, Response
@@ -28,6 +45,16 @@ from api_gateway.schemas.audit import AuditEvent
 from shared.observability.logging import emit, get_logger
 
 AUDIT_TIMEOUT = 2.0
+MAX_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = (0.3, 0.8)  # delay before attempt 2, then attempt 3
+MAX_PENDING = 500
+
+# Bounded in-process queue of (payload, url, api_key, request_id) tuples that
+# exhausted their retries — drained by flush_pending_audit_events() on an
+# interval (see main.py's lifespan). Stores the already-translated payload
+# so a flush retry never needs the original AuditEvent object again.
+_pending: deque[tuple[dict, str, str, str]] = deque(maxlen=MAX_PENDING)
+_dropped_total = 0
 
 
 def _to_audit_store_payload(event: AuditEvent) -> dict:
@@ -59,13 +86,58 @@ def _to_audit_store_payload(event: AuditEvent) -> dict:
     }
 
 
+async def _post_once(
+    payload: dict, audit_store_url: str, http_client: httpx.AsyncClient, api_key: str, request_id: str
+) -> bool:
+    """Single POST attempt. Returns True on a 2xx response, False otherwise."""
+    try:
+        resp = await http_client.post(
+            f"{audit_store_url}/audit/events",
+            json=payload,
+            headers={"X-API-Key": api_key},
+            timeout=AUDIT_TIMEOUT,
+        )
+        if resp.status_code < 300:
+            return True
+        emit(
+            get_logger(request_id),
+            level="WARNING",
+            event="audit_write_non_2xx",
+            message="Audit Store rejected event",
+            status_code=resp.status_code,
+        )
+        return False
+    except httpx.TimeoutException:
+        emit(
+            get_logger(request_id),
+            level="WARNING",
+            event="audit_write_timeout",
+            message="Audit Store write timed out",
+        )
+        return False
+    except Exception as exc:
+        emit(
+            get_logger(request_id),
+            level="WARNING",
+            event="audit_write_failed",
+            message="Audit Store write failed",
+            error=str(exc),
+        )
+        return False
+
+
 async def post_audit_event(
     event: AuditEvent,
     audit_store_url: str,
     http_client: httpx.AsyncClient,
     api_key: str = "",
 ) -> None:
-    """Non-blocking audit write. Failures are logged as WARNING, never raised.
+    """Non-blocking audit write with short retries; never raises.
+
+    Retries up to MAX_ATTEMPTS times with a short backoff. If every attempt
+    fails, the translated payload is queued in _pending for
+    flush_pending_audit_events() to keep retrying rather than being dropped
+    outright.
 
     Args:
         event:           The api_gateway AuditEvent to POST (translated to
@@ -74,35 +146,60 @@ async def post_audit_event(
         http_client:     Shared httpx.AsyncClient; caller manages its lifecycle.
         api_key:         X-API-Key header value for the Audit Store.
     """
-    try:
-        resp = await http_client.post(
-            f"{audit_store_url}/audit/events",
-            json=_to_audit_store_payload(event),
-            headers={"X-API-Key": api_key},
-            timeout=AUDIT_TIMEOUT,
-        )
-        if resp.status_code >= 300:
-            emit(
-                get_logger(event.request_id),
-                level="WARNING",
-                event="audit_write_non_2xx",
-                message="Audit Store rejected event",
-                status_code=resp.status_code,
-            )
-    except httpx.TimeoutException:
+    payload = _to_audit_store_payload(event)
+    for attempt in range(MAX_ATTEMPTS):
+        if await _post_once(payload, audit_store_url, http_client, api_key, event.request_id):
+            return
+        if attempt < len(RETRY_BACKOFF_SECONDS):
+            await asyncio.sleep(RETRY_BACKOFF_SECONDS[attempt])
+
+    _queue_pending(payload, audit_store_url, api_key, event.request_id)
+
+
+def _queue_pending(payload: dict, url: str, api_key: str, request_id: str) -> None:
+    global _dropped_total
+    if len(_pending) == _pending.maxlen:
+        _dropped_total += 1
         emit(
-            get_logger(event.request_id),
+            get_logger(request_id),
             level="WARNING",
-            event="audit_write_timeout",
-            message="Audit Store write timed out",
+            event="audit_pending_queue_full_dropping_oldest",
+            message="Audit pending queue full — dropping oldest event",
+            dropped_total=_dropped_total,
         )
-    except Exception as exc:
+    _pending.append((payload, url, api_key, request_id))
+
+
+async def flush_pending_audit_events(http_client: httpx.AsyncClient) -> None:
+    """Retry every queued event once; re-queue whatever still fails.
+
+    Called on an interval from main.py's lifespan. Never raises. Snapshots
+    the current queue length up front so this makes bounded progress even
+    if new events are being queued concurrently while it runs.
+    """
+    remaining = len(_pending)
+    if not remaining:
+        return
+
+    flushed = 0
+    for _ in range(remaining):
+        try:
+            payload, url, api_key, request_id = _pending.popleft()
+        except IndexError:
+            break
+        if await _post_once(payload, url, http_client, api_key, request_id):
+            flushed += 1
+        else:
+            _pending.append((payload, url, api_key, request_id))
+
+    if flushed:
         emit(
-            get_logger(event.request_id),
-            level="WARNING",
-            event="audit_write_failed",
-            message="Audit Store write failed",
-            error=str(exc),
+            get_logger("audit-flush"),
+            level="INFO",
+            event="audit_pending_queue_flushed",
+            message="Flushed queued audit events",
+            flushed=flushed,
+            still_pending=len(_pending),
         )
 
 

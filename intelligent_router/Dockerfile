@@ -28,6 +28,14 @@ COPY shared/             ./shared/
 COPY model_matrix.yaml           ./model_matrix.yaml
 COPY task_classifier_rules.yaml  ./task_classifier_rules.yaml
 
+# Non-root user. Note: docker-compose.prod.yml bind-mounts the routable
+# model/policy/task-classifier YAML read-only over these baked-in copies —
+# those host files must stay world-readable (standard git checkout perms)
+# for appuser to read them.
+RUN adduser --uid 1000 --disabled-password --gecos "" appuser \
+ && chown -R appuser:appuser /app
+USER appuser
+
 EXPOSE 8082 9090
 
 CMD ["sh", "-c", \

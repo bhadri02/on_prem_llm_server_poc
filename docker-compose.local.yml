@@ -37,5 +37,19 @@ services:
       timeout: 3s
       retries: 5
 
+  # Distributed tracing backend — receives OTLP spans from any service
+  # started with TRACING_ENABLED=true (see local.env). Optional: services
+  # gracefully no-op if this container isn't running or opentelemetry-*
+  # packages aren't installed. UI at http://localhost:16686.
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: llm-poc-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4317:4317"    # OTLP gRPC receiver
+    restart: unless-stopped
+
 volumes:
   postgres_data:
